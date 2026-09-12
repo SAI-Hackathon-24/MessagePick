@@ -504,6 +504,12 @@ export interface NotificationEntry {
   priority: Priority
   todoStatus: TodoStatus
   sourceMessageIds: Id[]
+  /** 主题（聚类命名 / 用户可改；通知总览条目展示用） */
+  topic: string
+  /** 事项要素（与主题拼出条目主行；未提取到为空） */
+  subjectElement: string | null
+  /** 时间要素（条目展示时间；未提取到为空） */
+  timeElement: Timestamp | null
 }
 
 /** 分组的通知列表：一组（key / 展示标签 + 条目）。 */

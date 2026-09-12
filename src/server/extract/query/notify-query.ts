@@ -226,6 +226,11 @@ function notifyEntryOf(entry: ExtractedItem): NotificationEntry {
     priority: entry.priority,
     todoStatus: entry.todoStatus,
     sourceMessageIds: [...entry.sourceMessageIds],
+    /* 通知总览面板要能直接读：主行「主题 · 事项要素」+ 时间（与 API-014 同源字段，纯补充）。
+       早前只回 6 个字段，面板条目只能渲染空白按钮（2026-09-13 修正）。 */
+    topic: entry.topic,
+    subjectElement: entry.subjectElement,
+    timeElement: entry.timeElement,
   }
 }
 

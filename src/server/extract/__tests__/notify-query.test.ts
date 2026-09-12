@@ -43,6 +43,10 @@ describe('组序与组头（§4 API-015）', () => {
       priority: '中',
       todoStatus: '未处理',
       sourceMessageIds: ['m-g2'],
+      /* 2026-09-13 补充：面板主行「主题 · 事项要素」与时间（API-014 同源字段） */
+      topic: '主题',
+      subjectElement: null,
+      timeElement: null,
     })
     expect(page.pageInfo).toEqual({ page: 1, pageSize: NOTIFY_GROUP_PAGE_SIZE, total: 3 })
     expect(page.truncated).toBe(false)

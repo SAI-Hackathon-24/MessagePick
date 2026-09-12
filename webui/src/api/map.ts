@@ -716,6 +716,10 @@ export async function toNoticeGroups(wire: {
       priority: string;
       todoStatus: string;
       sourceMessageIds: string[];
+      /** 2026-09-13 起随 API-015 补充（旧响应缺失时按空处理） */
+      topic?: string;
+      subjectElement?: string | null;
+      timeElement?: number | null;
     }>;
   }>;
 }): Promise<Array<{ key: string; label: string; items: ExtractItem[] }>> {
@@ -723,21 +727,30 @@ export async function toNoticeGroups(wire: {
   return wire.groups.map((group) => ({
     key: group.key,
     label: group.label,
-    items: group.notifications.map((row) => ({
-      id: row.entryId,
-      type: enRecognition(row.recognitionType),
-      elements: {},
-      subject: '',
-      groupId: row.groupId,
-      groupName: groupNameOf(row.groupId),
-      sentAt: '',
-      summaryLine: '',
-      aiSummary: '',
-      priority: (PRIORITY as Record<string, 'high' | 'medium' | 'low'>)[row.priority] ?? 'medium',
-      todoState: (TODO_STATE as Record<string, 'pending' | 'done' | 'ignored'>)[row.todoStatus] ?? 'pending',
-      remindState: 'no_remind',
-      sourceRefs: refsOf(row.sourceMessageIds),
-    })),
+    items: group.notifications.map((row) => {
+      const topic = row.topic ?? '';
+      const subjectElement = row.subjectElement ?? null;
+      const timeElement = row.timeElement ?? null;
+      return {
+        id: row.entryId,
+        type: enRecognition(row.recognitionType),
+        elements: {
+          ...(timeElement === null ? {} : { time: iso(timeElement) }),
+          ...(subjectElement === null || subjectElement === '' ? {} : { subject: subjectElement }),
+        },
+        subject: topic,
+        groupId: row.groupId,
+        groupName: groupNameOf(row.groupId),
+        sentAt: iso(timeElement),
+        /* 主行与时间轴卡片同口径：「主题 · 事项要素」；早前置空导致面板条目一片空白 */
+        summaryLine: [topic, subjectElement].filter((v) => v !== null && v !== '').join(' · '),
+        aiSummary: '',
+        priority: (PRIORITY as Record<string, 'high' | 'medium' | 'low'>)[row.priority] ?? 'medium',
+        todoState: (TODO_STATE as Record<string, 'pending' | 'done' | 'ignored'>)[row.todoStatus] ?? 'pending',
+        remindState: 'no_remind',
+        sourceRefs: refsOf(row.sourceMessageIds),
+      };
+    }),
   }));
 }
 
