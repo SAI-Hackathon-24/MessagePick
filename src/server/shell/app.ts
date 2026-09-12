@@ -155,7 +155,7 @@ export interface ShellAppOptions {
   port?: number
   /** 端口对象（模块已装配时整体注入；缺省 = 就地装配）。 */
   ports?: Partial<ShellPorts>
-  /** 静态页面目录；缺省 = `<仓库根>/dist/web`（`npm run build` 的产物）。 */
+  /** 静态页面目录；缺省 = `<仓库根>/webui/dist`（`npm run build` 的产物）。 */
   webDir?: string
 }
 
@@ -167,7 +167,7 @@ export interface ShellApp {
   dataDir: string
   ports: ShellPorts
   logger: ShellLogger
-  /** 页面产物是否存在（`dist/web/index.html`）。 */
+  /** 页面产物是否存在（`webui/dist/index.html`）。 */
   pageBuilt: boolean
   /** 监听后回填实际端口（守卫的 origin 集合随它变化）。 */
   setBoundPort(port: number): void
@@ -203,9 +203,9 @@ export function defaultDataDir(): string {
   return fileURLToPath(new URL('../../../data/', import.meta.url))
 }
 
-/** 前端构建产物目录（`npm run build` → `dist/web`）。 */
+/** 前端构建产物目录（`npm run build` → `webui/dist`）。 */
 export function defaultWebDir(): string {
-  return fileURLToPath(new URL('../../../dist/web/', import.meta.url))
+  return fileURLToPath(new URL('../../../webui/dist/', import.meta.url))
 }
 
 // ---------------------------------------------------------------------------
