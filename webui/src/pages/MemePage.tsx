@@ -51,7 +51,24 @@ export default function MemePage() {
     () => (mineOnly ? api.myMemes(filter, 'used') : api.memeCloud(filter, layout, scale)),
     [mineOnly, JSON.stringify(filter), layout, scale],
   );
-  const lifecycle = useApi(() => api.memeLifecycle(filter, []), [JSON.stringify(filter)]);
+  /* 生命周期视图的月份窗口：锚定词云数据自身的「首现 ~ 最近」范围。
+     服务端 API-011 按请求窗口原样返回月度强度（含空月），窗口过宽时条带会落在
+     窗口远角、看上去全空；用数据范围做窗口后条带铺满视野。词云未就绪时给空数组，
+     由接口层兜底「最近 24 个月」。 */
+  const lifecycleMonths = useMemo(() => {
+    const stamps = (cloud.data?.entries ?? [])
+      .flatMap((entry) => [entry.firstSeenAt, entry.lastUsedAt])
+      .map((value) => value.slice(0, 7))
+      .filter((month) => /^\d{4}-\d{2}$/.test(month))
+      .sort();
+    const first = stamps[0];
+    const last = stamps[stamps.length - 1];
+    return first === undefined || last === undefined ? [] : [first, last];
+  }, [cloud.data]);
+  const lifecycle = useApi(
+    () => api.memeLifecycle(filter, lifecycleMonths),
+    [JSON.stringify(filter), lifecycleMonths.join(',')],
+  );
 
   const source = mineOnly ? mine : cloud;
   const entries = source.data?.entries ?? [];

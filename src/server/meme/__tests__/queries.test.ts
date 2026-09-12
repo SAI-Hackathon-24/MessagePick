@@ -422,11 +422,14 @@ describe('MOD-005 queryLifecycle：行结构与派生值（AC-048 / AC-053）', 
     expect(row?.silentAt).toBe(daysBefore(2))
     expect(row?.activeDays).toBe(38)
     expect(row?.monthlyStrength).toEqual({ '2026-07': 0, '2026-08': 0.25, '2026-09': 1 })
+    // 同窗口的真实次数（条带标签 / 色阶用；不丢空月）
+    expect(row?.monthlyCounts).toEqual({ '2026-07': 0, '2026-08': 1, '2026-09': 4 })
     // 表格可直接复制：视图行不携带内部排序字段。
     expect(Object.keys(row ?? {}).sort()).toEqual([
       'activeDays',
       'firstSeenAt',
       'memeId',
+      'monthlyCounts',
       'monthlyStrength',
       'name',
       'peakMonth',

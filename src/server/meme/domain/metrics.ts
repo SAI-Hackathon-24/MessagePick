@@ -418,8 +418,11 @@ export function computeLifecycle(sources: readonly LifecycleSource[], months: { 
     const peak = peakMonthOf(source.monthlyCounts)
     const peakCount = peak === null ? 0 : source.monthlyCounts[peak] ?? 0
     const monthlyStrength: MonthlyCounts = {}
+    const monthlyCounts: MonthlyCounts = {}
     for (const month of range) {
-      monthlyStrength[month] = peakCount > 0 ? (source.monthlyCounts[month] ?? 0) / peakCount : 0
+      const count = source.monthlyCounts[month] ?? 0
+      monthlyStrength[month] = peakCount > 0 ? count / peakCount : 0
+      monthlyCounts[month] = count
     }
     return {
       memeId: source.memeId,
@@ -429,6 +432,7 @@ export function computeLifecycle(sources: readonly LifecycleSource[], months: { 
       silentAt: source.lastUsedAt,
       activeDays: calendarDayDiff(source.firstSeenAt, source.lastUsedAt),
       monthlyStrength,
+      monthlyCounts,
       occurrenceCount: source.occurrenceCount,
     }
   })
