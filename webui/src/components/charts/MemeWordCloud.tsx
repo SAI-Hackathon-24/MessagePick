@@ -58,12 +58,21 @@ export function MemeWordCloud({
           right: 0,
           top: 8,
           bottom: 8,
-          sizeRange: [14, 58],
-          rotationRange: layout === 'firstSeen' ? [0, 0] : [-45, 45],
-          rotationStep: 45,
-          gridSize: 10,
+          /**
+           * 以下四项针对「文字互相重叠」的修正（评审反馈 2）：
+           * · rotationRange 固定 0：`echarts-wordcloud` 对**旋转后的中日韩文字**
+           *   包围盒估算不准，旋转词会与邻居重叠，且是否触发取决于词条集合
+           *   （所以表现为「有些查询条件正常、有些重叠」）。横排是唯一稳定的选择。
+           * · gridSize 提到 16：中文单字宽度大，10 的栅格间距过密。
+           * · layoutAnimation 关闭：容器尺寸变化（侧栏折叠、窗口缩放）时布局会
+           *   带着动画重排，期间出现叠字；关掉后一次排定。
+           * · sizeRange 上限降到 48：给长词留出空间，避免大字把邻词压到重叠。
+           */
+          sizeRange: [13, 48],
+          rotationRange: [0, 0],
+          gridSize: 16,
           drawOutOfBound: false,
-          layoutAnimation: true,
+          layoutAnimation: false,
           textStyle: {
             fontFamily: 'PingFang SC, Microsoft YaHei, sans-serif',
             fontWeight: 700,
@@ -71,7 +80,8 @@ export function MemeWordCloud({
           },
           // 按首次出现时间布局时，在词下标注首现日期（REQ-023）
           data: entries.map((e) => ({
-            name: layout === 'firstSeen' ? `${e.name}\n${e.firstSeenAt.slice(5, 10)}` : e.name,
+            // 「按首次出现时间」时把首现日期缀在词后（用空格分隔，换行会被词云裁掉）
+            name: layout === 'firstSeen' ? `${e.name} ${e.firstSeenAt.slice(5, 10)}` : e.name,
             value: e.frequency,
             entry: e,
           })),
