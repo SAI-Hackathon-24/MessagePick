@@ -37,7 +37,8 @@ export function MemeUnitDrawer({
   anchor?: { x: number; y: number };
   onClose: () => void;
   onOpenVariant: (memeId: string) => void | Promise<void>;
-  onCorrected: (next: MemeUnit) => void;
+  /** 改判成功回调；`null` = 该单元已不可直接访问（不是梗 / 已合并），应关闭视图并刷新列表 */
+  onCorrected: (next: MemeUnit | null) => void;
   onGenerate: (unit: MemeUnit) => void;
 }) {
   const { claimDrawer, releaseDrawer } = useAppState();
@@ -70,9 +71,15 @@ export function MemeUnitDrawer({
     if (res.ok && res.data) {
       onCorrected(res.data);
       setMsg(`已改判为「${CORRECTION_LABEL[mark]}」，后续结果已按改判更新。`);
-    } else {
-      setMsg(`${res.error?.message ?? '改判失败'}（${res.error?.code ?? 'UNKNOWN'}）`);
+      return;
     }
+    if (res.ok) {
+      /* 「不是梗 / 合并到其他梗」：提交已成功、单元按设计不再可访问 ——
+         关闭抽屉并刷新列表（词云/统计中移除），不当作失败提示。 */
+      onCorrected(null);
+      return;
+    }
+    setMsg(`${res.error?.message ?? '改判失败'}（${res.error?.code ?? 'UNKNOWN'}）`);
   };
 
   return (

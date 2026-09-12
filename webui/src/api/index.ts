@@ -440,7 +440,7 @@ export const api = {
   },
 
   /** API-012 提交纠正改判：四类改判立即生效（REQ-035） */
-  async submitCorrection(memeId: string, mark: MemeUnit['correction'], mergeTargetId?: string): Promise<ApiEnvelope<MemeUnit>> {
+  async submitCorrection(memeId: string, mark: MemeUnit['correction'], mergeTargetId?: string): Promise<ApiEnvelope<MemeUnit | null>> {
     if (mark === 'none') {
       return invalid('「无」不是可提交的改判类型', '四类改判：不是梗 / 不感兴趣 / 合并到其他梗 / 梗王标注有误。');
     }
@@ -450,7 +450,13 @@ export const api = {
     if (!res.ok) return res;
     setCorrection(memeId, mark);
     const unit = await request<Parameters<typeof toMemeUnit>[0]>('GET', `/memes/${encodeURIComponent(memeId)}`);
-    return unit.ok ? { ok: true, data: await toMemeUnit(unit.data) } : unit;
+    /* 「不是梗 / 合并到其他梗」改判后单元按设计不再可直接访问（GET → NOT_FOUND）——
+       提交本身已成功，返回 null 表示「已移除」，由调用方关闭视图并刷新列表；
+       不把成功改判当失败提示（2026-09-13 修正：曾致「已设成功却报 NOT_FOUND」）。 */
+    if (!unit.ok) {
+      return unit.error?.code === 'NOT_FOUND' ? { ok: true, data: null } : unit;
+    }
+    return { ok: true, data: await toMemeUnit(unit.data) };
   },
 
   /** API-013 查询「我相关」梗：我用过的 / 我参与消息里的（REQ-006） */
