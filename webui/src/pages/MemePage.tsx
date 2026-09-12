@@ -29,7 +29,7 @@ import {
 import { Button } from '@/components/shell/Button';
 import { Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { MemeWordCloud } from '@/components/charts/MemeWordCloud';
-import { LifecycleStrip } from '@/components/charts/Charts';
+import { LifecycleHeatmap } from '@/components/charts/Charts';
 import { MemeUnitDrawer } from '@/components/unit/MemeUnitDrawer';
 import { GeneratePanel } from '@/components/unit/GeneratePanel';
 
@@ -195,49 +195,37 @@ export default function MemePage() {
               <ErrorState error={lifecycle.error} onRetry={lifecycle.refetch} onClearFilter={clearFilter} />
             ) : (
               <>
+                {/* 怎么读这张图（把「生命周期」讲清楚） */}
+                <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
+                    <div className="mp-section-title mb-1">一眼看出「火过多久」</div>
+                    <p className="mp-meta leading-relaxed">同一行的有色格子从最左到最右，就是这个梗从初现到沉寂的跨度；越靠右说明它凉得越晚。</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
+                    <div className="mp-section-title mb-1">一眼看出「这段时间在玩什么」</div>
+                    <p className="mp-meta leading-relaxed">同一列里颜色最暖的格子，就是那个月被反复使用的梗。</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
+                    <div className="mp-section-title mb-1">颜色含义</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="mp-meta">少</span>
+                      <span className="h-3 w-24 rounded-sm border border-ink-900/10" style={{ background: 'linear-gradient(90deg, #eef7f1, #0b5c33)' }} />
+                      <span className="mp-meta">多</span>
+                    </div>
+                    <p className="mp-meta mt-1 leading-relaxed">色阶按「当月强度」在 0 ~ 本期最大值之间线性映射。</p>
+                  </div>
+                </div>
+
+                <LifecycleHeatmap rows={lifecycle.data?.rows ?? []} />
+
                 {/* 当月领跑梗（REQ-025） */}
-                <div className="mb-3 flex flex-wrap gap-1.5">
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span className="mp-meta mr-1">当月领跑梗</span>
                   {(lifecycle.data?.monthlyLeaders ?? []).slice(-6).map((l) => (
                     <Chip key={l.month} title={`${l.month} 出现 ${l.count} 次`}>
                       {l.month.slice(5)}：{l.name}
                     </Chip>
                   ))}
-                </div>
-                <ul className="space-y-1.5">
-                  {(lifecycle.data?.rows ?? []).slice(0, 20).map((row) => (
-                    <li key={row.memeId} className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void openUnit({ memeId: row.memeId } as MemeCloudEntry)}
-                        className="flex w-[150px] shrink-0 items-center gap-1.5 text-left hover:text-jade-700 sm:w-[180px]"
-                      >
-                        <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: MEME_TYPE_COLOR[row.type] }} />
-                        <span className="truncate text-[13px] font-semibold text-ink-700">{row.name}</span>
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <LifecycleStrip row={row} />
-                      </div>
-                      <span className="w-[76px] shrink-0 text-right text-[11px] tabular-nums text-ink-400" title={`首现 ${row.firstSeenAt.slice(0, 10)} / 沉寂 ${row.silentAt.slice(0, 10)}`}>
-                        {row.activeDays} 天
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="mp-meta mt-3 flex flex-wrap items-center gap-3">
-                  <span>色阶：</span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#d6f5e3' }} /> 低
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#45bd87' }} /> 中
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#059a4d' }} /> 高
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#f59e0b' }} /> 峰值月
-                  </span>
                 </div>
               </>
             )}

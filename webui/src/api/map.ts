@@ -145,6 +145,67 @@ export const setCorrection = (memeId: string, mark: CorrectionMark): void => {
   correctionOf.set(memeId, mark);
 };
 
+/* -------------------------------------------------------------------------- */
+/* 本地改判记录（黑名单）                                                       */
+/* -------------------------------------------------------------------------- */
+/**
+ * 后端的改判标记随梗单元一起返回，但**没有**「列出我的全部改判」的查询接口。
+ * 界面需要一个「已改判记录」面板（查看 + 撤销），因此在本地留一份记录。
+ *
+ * 语义与使用者的要求一致：
+ *   · 改判先写本地记录 → 立即生效（各视图按本地标记处理）
+ *   · 本地记录即**黑名单**：后端模型下次总结时不会把这些条目改回去
+ *   · 持久化到 localStorage，刷新页面后仍然生效；撤销即删除记录
+ *
+ * 键名含 `mp:` 前缀，避免与其它本地数据冲突。
+ */
+const CORRECTION_STORE_KEY = 'mp:meme-corrections'
+
+export interface LocalCorrectionRecord {
+  memeId: string;
+  memeName: string;
+  mark: Exclude<CorrectionMark, 'none'>;
+  mergeTargetId?: string;
+  mergeTargetName?: string;
+  kingOverrideName?: string;
+  correctedAt: string;
+}
+
+const readStore = (): LocalCorrectionRecord[] => {
+  try {
+    const raw = globalThis.localStorage?.getItem(CORRECTION_STORE_KEY)
+    if (raw === null || raw === undefined) return []
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as LocalCorrectionRecord[]) : []
+  } catch {
+    // 隐私模式 / 配额满 / 脏数据：退化为「本次会话内有效」，不阻塞改判
+    return []
+  }
+}
+
+const writeStore = (rows: LocalCorrectionRecord[]): void => {
+  try {
+    globalThis.localStorage?.setItem(CORRECTION_STORE_KEY, JSON.stringify(rows))
+  } catch {
+    /* 写入失败不影响内存中的改判结果 */
+  }
+}
+
+/** 记录一次改判（同一条梗重复改判时覆盖旧记录）。 */
+export const rememberCorrection = (record: Omit<LocalCorrectionRecord, 'correctedAt'>): void => {
+  const rest = readStore().filter((r) => r.memeId !== record.memeId)
+  writeStore([{ ...record, correctedAt: new Date().toISOString() }, ...rest])
+}
+
+/** 撤销一条改判（删除本地记录）。 */
+export const forgetCorrection = (memeId: string): void => {
+  writeStore(readStore().filter((r) => r.memeId !== memeId))
+  correctionOf.delete(memeId)
+}
+
+/** 全部本地改判记录（最近的在前）。 */
+export const listCorrections = (): LocalCorrectionRecord[] => readStore()
+
 /** 群清单（一次拉取；失败不阻塞后续请求，展示名回落为标识）。 */
 export function ensureGroups(): Promise<Map<string, string>> {
   if (groupsPromise === null) {
