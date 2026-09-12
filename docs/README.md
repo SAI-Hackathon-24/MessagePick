@@ -293,7 +293,7 @@ stateDiagram-v2
 | 文件 | 状态 | 说明 |
 | --- | --- | --- |
 | `docs/README.md` | draft | 本文件，架构规则 |
-| `docs/raw/raw_design.md` | draft | 占位模板，**待你手写** |
+| `docs/raw/raw_design.md` | reviewed | 已由人写实：三模块总纲 + 模块一 v1.1 详规 + §2 全局约定 + §5 社交模块；CHG-013 已关闭全部待确认与 `TODO`，可供下游消费 |
 | `docs/product/prd.md` | draft | 占位模板，待阶段 1 生成 |
 | `docs/design/modules.md` | draft | 占位模板，待阶段 2 生成 |
 | `docs/design/api-contract.md` | draft | 占位模板，待阶段 3 生成 |
@@ -310,7 +310,7 @@ stateDiagram-v2
 | `docs/prompt/generate_detailed_design.md` | reviewed | 阶段 7b：详设生成器，展开 HLD 第 5 节的横切关注点 |
 | `docs/prompt/run_pipeline.md` | reviewed | 编排器：按门禁顺序调度阶段 1–7b、转述提问、核对产出，最后建模块骨架；**不产出任何设计内容** |
 | `docs/prompt/update_design_document_prompt.md` | — | 指针文件，指向 skill（流程定义已迁出，见 §11） |
-| `docs/CHANGELOG.md` | — | 变更记录（只追加），已含 CHG-001 – CHG-004 |
+| `docs/CHANGELOG.md` | — | 变更记录（只追加），已含 CHG-001 – CHG-013 |
 | `docs/design/README.md` | draft | 设计分层导航（契约层 vs 实现层） |
 | `docs/design/impl/high-level-design.md` | draft | HLD 模板，待撰写 |
 | `docs/design/impl/detailed-design.md` | draft | 详设模板，待撰写 |
@@ -321,7 +321,7 @@ stateDiagram-v2
 
 ### 待办（本架构落地需要的事）
 
-- [ ] 手写 `docs/raw/raw_design.md`（唯一需要人从零写的文档）。
+- [x] 手写 `docs/raw/raw_design.md`（唯一需要人从零写的文档）。
 - [x] 在现有 `generate_prd.md` / `generate_modules.md` 的「额外要求」里补一句「输出须带 §5.2 的 ID 前缀」，否则追溯链断在阶段 1、2。
 - [x] 补全阶段 3–6 的 prompt 步骤（原来只有骨架）。
 - [x] 把 `update_design_document_prompt.md` 改造成 skill —— 已完成，见 §11 与 `design-doc-change`。
