@@ -19,7 +19,14 @@
 
 | 模块 | 负责人 | 实现状态 | 设计文档 | 关联任务 | 阻塞原因 | 分支 / PR | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `MOD-001` | — | 未开始 | [mod-001-&lt;slug&gt;](../design/impl/mod-001-&lt;slug&gt;.md) | `TASK-###` | — | — | 2026-09-12 |
+| `MOD-001` | — | 未开始 | [mod-001-data-ingest.md](../design/impl/mod-001-data-ingest.md) | `TASK-006`、`TASK-007` | — | — | 2026-09-12 |
+| `MOD-002` | — | 未开始 | [mod-002-data-store-privacy.md](../design/impl/mod-002-data-store-privacy.md) | `TASK-001` ~ `TASK-003` | — | — | 2026-09-12 |
+| `MOD-003` | — | 未开始 | [mod-003-analysis-engine.md](../design/impl/mod-003-analysis-engine.md) | `TASK-004`、`TASK-005` | — | — | 2026-09-12 |
+| `MOD-004` | — | 未开始 | [mod-004-app-shell.md](../design/impl/mod-004-app-shell.md) | `TASK-008` ~ `TASK-011`、`TASK-036` ~ `TASK-038` | — | — | 2026-09-12 |
+| `MOD-005` | — | 未开始 | [mod-005-meme-analysis.md](../design/impl/mod-005-meme-analysis.md) | `TASK-012` ~ `TASK-017` | — | — | 2026-09-12 |
+| `MOD-006` | — | 未开始 | [mod-006-info-extraction.md](../design/impl/mod-006-info-extraction.md) | `TASK-018` ~ `TASK-021` | — | — | 2026-09-12 |
+| `MOD-007` | — | 未开始 | [mod-007-social-profile.md](../design/impl/mod-007-social-profile.md) | `TASK-022` ~ `TASK-031` | — | — | 2026-09-12 |
+| `MOD-008` | — | 未开始 | [mod-008-regeneration.md](../design/impl/mod-008-regeneration.md) | `TASK-032` ~ `TASK-035` | — | — | 2026-09-12 |
 
 ## 状态统计
 
@@ -27,11 +34,11 @@
 
 | 状态 | 数量 |
 | --- | --- |
-| 未开始 | |
-| 进行中 | |
-| 阻塞 | |
-| 待评审 | |
-| 完成 | |
+| 未开始 | 8 |
+| 进行中 | 0 |
+| 阻塞 | 0 |
+| 待评审 | 0 |
+| 完成 | 0 |
 
 ## 待确认
 
