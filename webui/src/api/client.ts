@@ -3,7 +3,9 @@
  *
  * - 读请求 `GET` 不带令牌；写请求（`POST` / `PATCH` / `PUT`）带启动令牌头
  *   （`x-messagepick-token`；服务端守卫按它放行，无令牌时写操作被拒 → 界面呈现只读提示）。
- * - 令牌只从 URL fragment 解析、只在内存持有；页面刷新即重取（详设 §4.1，令牌不落任何持久化位置）。
+ * - 令牌从 URL fragment 解析并存入 `sessionStorage`（同标签页刷新仍可用、关闭标签页即清除；
+ *   不写 localStorage、不入日志）；刷新后的地址已被脱敏、fragment 无令牌，则回退读取会话存储。
+ * - 服务重启后令牌轮换：旧令牌会被守卫拒绝（403），需从入口地址重新打开。
  * - 服务端统一信封：成功 `{ data, epoch, requestId }`；失败 `{ error: { code, message, retryable, scope } }`。
  *   本层把两者归一为界面侧的 `ApiEnvelope`（`{ ok, data, error }`），组件不感知差异。
  */
@@ -22,6 +24,9 @@ const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
 /** 内存中的启动令牌（页面生命周期内有效）。 */
 let token: string | null = null;
 
+/** 会话存储键：随标签页会话存活（刷新保留、关闭标签页清除），服务重启后旧值自然失效。 */
+const TOKEN_STORAGE_KEY = 'messagepick.launch-token';
+
 /** 是否持有启动令牌（无令牌 = 只读；写操作会被服务端守卫拒绝）。 */
 export const hasLaunchToken = (): boolean => token !== null;
 
@@ -35,9 +40,34 @@ export function captureLaunchToken(hash: string = window.location.hash): string 
   const value = new URLSearchParams(query).get(TOKEN_FRAGMENT_KEY);
   if (value !== null && value.length > 0) {
     token = value;
+    saveLaunchToken(value);
     return value;
   }
   return null;
+}
+
+/**
+ * 回退读取会话存储里的启动令牌（刷新后的地址已脱敏、fragment 不带令牌）。
+ * 服务重启后旧令牌会被守卫拒绝（403），按提示从入口地址重新打开即可。
+ */
+export function restoreLaunchToken(): string | null {
+  if (token !== null) return token;
+  try {
+    const saved = window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if (saved !== null && saved.length > 0) token = saved;
+  } catch {
+    // 会话存储不可用（隐私策略等）：保持只读，不影响其余功能
+  }
+  return token;
+}
+
+/** 写入会话存储（失败不阻断：令牌仍在内存中可用）。 */
+function saveLaunchToken(value: string): void {
+  try {
+    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, value);
+  } catch {
+    // 同上：不可写时降级为仅内存持有
+  }
 }
 
 /** 地址栏脱敏：去掉 fragment 里的令牌参数，保留其余部分（路由 / 其他查询参数）。 */
@@ -86,7 +116,7 @@ const failure = (code: ErrorCode, message: string, hint?: string): ApiEnvelope<n
 /** 常见错误的补充指引（终端操作指引；`api-contract.md` §1.2 的 closed set 之外不新增标识）。 */
 function hintOf(scope: unknown, code: ErrorCode): string | undefined {
   if (scope === 'guard:token') {
-    return '请从应用入口重新打开页面（npm start 打开的地址携带启动令牌）。';
+    return 'npm start 输出的地址携带启动令牌（服务重启后令牌会轮换），请用入口地址重新打开。';
   }
   if (scope === 'guard:origin' || scope === 'guard:host') {
     return '本机服务只接受回环地址访问；请通过应用入口打开页面。';
