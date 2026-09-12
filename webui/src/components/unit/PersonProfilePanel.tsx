@@ -30,6 +30,10 @@ export function PersonProfilePanel({ personId }: { personId: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  if (personId.length === 0) {
+    return <EmptyState title="请选择成员" description="从左侧名单中选择一位成员，查看其兴趣画像与性格标签。" />;
+  }
+
   if (profile.loading && !profile.data) return <LoadingState label="正在读取兴趣画像…" rows={3} />;
   if (profile.error) {
     return <ErrorState error={profile.error} onRetry={profile.refetch} />;

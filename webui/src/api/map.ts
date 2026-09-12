@@ -116,6 +116,9 @@ const enMemeKind = (value: string): 'catchphrase' | 'inner' | 'sticker' =>
 /** 界面英文维度 → 契约中文（用于写路径入参）。 */
 export const zhDimension = (value: InterestCategory): string =>
   ({ sports: '运动', art: '艺术', game: '游戏', entertainment: '娱乐', social: '社交' })[value];
+/** 契约中文维度 → 界面英文类别（与 `zhDimension` 互逆）。 */
+export const dimensionOf = (value: string): InterestCategory =>
+  (DIMENSION as Record<string, InterestCategory>)[value] ?? 'sports';
 /** 界面英文性格六维 → 契约中文。 */
 export const zhPersonality = (value: PersonalityTrait): string =>
   ({ leadership: '领导式', lively: '活泼', humorous: '幽默', calm: '冷静', rational: '理性', judgement: '判断' })[value];
@@ -144,6 +147,26 @@ export const tagInfoFor = (tagId: string): { name: string; category: InterestCat
 export const setCorrection = (memeId: string, mark: CorrectionMark): void => {
   correctionOf.set(memeId, mark);
 };
+
+/** 名单 / 图谱 / 评分卡结果写入人物缓存（配对、契合度等联表展示名用）。 */
+export function rememberPeople(
+  entries: readonly { personId: string; name: string; activity?: number; unknown?: boolean }[],
+): void {
+  for (const entry of entries) {
+    const prev = personInfo.get(entry.personId);
+    personInfo.set(entry.personId, {
+      name: entry.name,
+      activity: entry.activity ?? prev?.activity ?? 0,
+      replyMedianMs: prev?.replyMedianMs ?? null,
+      unknown: entry.unknown ?? prev?.unknown ?? false,
+    });
+  }
+}
+
+/** 评分卡 / 事件流结果写入兴趣标签缓存（写路径的标签定位用）。 */
+export function rememberTags(entries: readonly { tagId: string; name: string; category: InterestCategory }[]): void {
+  for (const entry of entries) tagInfo.set(entry.tagId, { name: entry.name, category: entry.category });
+}
 
 /** 群清单（一次拉取；失败不阻塞后续请求，展示名回落为标识）。 */
 export function ensureGroups(): Promise<Map<string, string>> {

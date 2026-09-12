@@ -133,7 +133,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (r.status === 'success') return `${label}：成功${r.imported ? `（${r.imported} 条）` : ''}`;
         return `${label}：${r.failureReason ?? '失败'}`;
       });
-      setUpdateNotice(parts.join('；'));
+      // 采集成功后外壳会按设置触发后台分析：如实提示下一步去向（REQ-016）
+      const messagesOk = res.data.results.some((r) => r.source === 'group_messages' && r.status === 'success');
+      const cfgRes = await api.settings();
+      const cfg = cfgRes.ok ? cfgRes.data : null;
+      const auto = cfg?.ingest.autoTriggerAfterIngest ?? true;
+      const modelReady = cfg === null ? true : cfg.model.baseUrl.length > 0 && cfg.model.apiKeyConfigured;
+      let suffix = '';
+      if (messagesOk && auto) {
+        suffix = modelReady
+          ? '。已触发后台分析，稍后刷新即可看到梗 / 提取 / 兴趣结果'
+          : '。已触发后台分析；但模型服务尚未配置（见「设置 → 模型服务」），分析任务会失败';
+      } else if (messagesOk && !auto) {
+        suffix = '。已按设置跳过自动分析（可在「设置 → 模型服务」开启）';
+      }
+      setUpdateNotice(`${parts.join('；')}${suffix}`);
       refreshStatus();
     },
     [refreshStatus],

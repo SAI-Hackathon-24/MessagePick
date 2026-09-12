@@ -11,9 +11,10 @@
  *
  * 降级清单（后端暂无数据面的入口，返回明确错误而不是伪造数据；见 webui/README.md）：
  *   · 生成 G1 ~ G3（依赖 MOD-008 编排层）与生成历史 / 素材确认清单；
- *   · 展示类视图：人-人关系图谱 / 兴趣事件流 / 兴趣评分卡；
  *   · 性格面板的「候选」区（后端无候选读取接口；已确认标签从画像取数）。
- * 错误一律按 `api-contract.md` §1.2 的稳定标识返回（不静默失败 —— REQ-016）。
+ * 展示类视图（人-人图谱 / 事件流 / 评分卡 / 人的名单）由本机外壳的展示组装路由
+ * （非契约接口）供数；错误一律按 `api-contract.md` §1.2 的稳定标识返回
+ * （不静默失败 —— REQ-016）。
  */
 import {
   type ApiEnvelope,
@@ -62,12 +63,16 @@ import {
   dayEnd,
   dayStart,
   DIMENSION_REVERSE,
+  dimensionOf,
   ensureGroups,
   ensureMembers,
   fullExtractItemOf,
+  iso,
   personNameOf,
   personaTraitFor,
   PRIORITY_REVERSE,
+  rememberPeople,
+  rememberTags,
   setCorrection,
   tagInfoFor,
   TODO_STATE,
@@ -114,6 +119,28 @@ const invalid = (message: string, hint?: string): ApiEnvelope<never> => ({
   error: { code: 'INVALID_INPUT', message, ...(hint === undefined ? {} : { hint }) },
 });
 
+/** 展示组装路由的线格式（外壳非契约接口）。 */
+interface WireEventStreams {
+  streams: Array<{
+    tagId: string;
+    name: string;
+    dimension: string;
+    firstSeenAt: number;
+    events: Array<{ at: number; intensity: number }>;
+  }>;
+}
+
+interface WireScoreCards {
+  cards: Array<{
+    tagId: string;
+    name: string;
+    dimension: string;
+    heat: number;
+    peopleCount: number;
+    perPerson: Array<{ personId: string; name: string; confidence: number }>;
+  }>;
+}
+
 /** 全局筛选 → 查询参数（mod-004 §4.2：`groupIds` 重复参数、`from` / `to`、`keyword`、`identity`；空 = 不限）。 */
 const filterQuery = (f: GlobalFilter): Array<[string, string]> =>
   queryOf([
@@ -145,6 +172,21 @@ export interface DataVolume {
   people: number;
   memes: number;
   extracts: number;
+}
+
+/** 外壳设置视图（GET/PUT `/api/settings`；密钥只写不读回）。 */
+export interface SettingsView {
+  model: { baseUrl: string; apiKeyConfigured: boolean; taskConcurrency: number };
+  ingest: { autoTriggerAfterIngest: boolean; pageSize: number };
+  server: { port: number };
+  log: { level: string; retentionDays: number };
+}
+
+/** 设置补丁（部分更新；缺省字段保持不变，`apiKey` 不传表示不改）。 */
+export interface SettingsPatch {
+  model?: { baseUrl?: string; apiKey?: string; taskConcurrency?: number };
+  ingest?: { autoTriggerAfterIngest?: boolean };
+  log?: { level?: string };
 }
 
 /** 数据去向说明（纯静态文案；REQ-012 / AC-030 的两处展示共用一份）。 */
@@ -364,6 +406,7 @@ export const api = {
 
   /** API-020 查询人物画像（REQ-061、REQ-071、REQ-073） */
   async personProfile(personId: string): Promise<ApiEnvelope<PersonProfile>> {
+    if (personId.length === 0) return invalid('未选择成员', '请先在成员列表中选择要查看的成员。');
     return loadProfile(personId);
   },
 
@@ -381,6 +424,7 @@ export const api = {
 
   /** API-022 查询两人配对（REQ-058、REQ-059、REQ-062） */
   async pairMatch(aId: string, bId: string): Promise<ApiEnvelope<PairMatch>> {
+    if (aId.length === 0 || bId.length === 0) return invalid('未选择两位成员', '请先选择要配对的两个成员。');
     const res = await request<Parameters<typeof toPairMatch>[0]>('GET', '/pairs', {
       query: [
         ['memberAId', aId],
@@ -434,6 +478,7 @@ export const api = {
    * 降级口径：后端无候选读取接口 → 面板「候选」区为空，已确认标签从画像（API-020）取数。
    */
   async personaPanel(personId: string): Promise<ApiEnvelope<PersonaPanel>> {
+    if (personId.length === 0) return invalid('未选择成员', '请先在成员列表中选择要查看的成员。');
     const res = await loadProfile(personId);
     return res.ok ? { ok: true, data: toPersonaPanel(res.data) } : res;
   },
@@ -486,21 +531,65 @@ export const api = {
     return res.ok ? { ok: true, data: await toHints(res.data) } : res;
   },
 
-  /* ================= 模块三的其余展示形态 ================= */
+  /* ================= 模块三的其余展示形态（外壳展示组装路由） ================= */
 
-  /** 展示-人-人关系图谱（REQ-069）：本机服务暂无该视图的数据面 → 降级为明确错误。 */
+  /** 展示-人的名单（非契约接口）：社交页成员列表 / 统计 / 配对默认值。 */
+  async memberRoster(): Promise<ApiEnvelope<RelationGraph['nodes']>> {
+    const res = await request<{ people: RelationGraph['nodes'] }>('GET', '/people/roster');
+    if (!res.ok) return res;
+    rememberPeople(res.data.people);
+    return { ok: true, data: res.data.people };
+  },
+
+  /** 展示-人-人关系图谱（REQ-069）：节点 = 全部人（未知者零连线），连线 = 共同爱好。 */
   async relationGraph(): Promise<ApiEnvelope<RelationGraph>> {
-    return notWired('人-人关系图谱（REQ-069）');
+    const res = await request<RelationGraph>('GET', '/social/graph');
+    if (!res.ok) return res;
+    rememberPeople(res.data.nodes);
+    return res;
   },
 
-  /** 展示-兴趣时间轴 / 事件流（REQ-067）：本机服务暂无该视图的数据面 → 降级。 */
+  /** 展示-兴趣时间轴 / 事件流（REQ-067）：首现时间 + 事件点；仅可视化、不参与权重。 */
   async interestEventStreams(): Promise<ApiEnvelope<InterestEventStream[]>> {
-    return notWired('兴趣事件流（REQ-067）');
+    const res = await request<WireEventStreams>('GET', '/interests/event-streams');
+    if (!res.ok) return res;
+    const streams = res.data.streams.map((row) => ({
+      tagId: row.tagId,
+      name: row.name,
+      category: dimensionOf(row.dimension),
+      firstSeenAt: iso(row.firstSeenAt),
+      // 契约事件点只含「时间 → 强度」（DM-013）：不带逐人信息，人物名留空
+      events: row.events.map((point) => ({ at: iso(point.at), intensity: point.intensity, personName: '' })),
+    }));
+    rememberTags(streams);
+    return { ok: true, data: streams };
   },
 
-  /** 展示-评分卡 / 仪表盘（REQ-068、REQ-078）：本机服务暂无该视图的数据面 → 降级。 */
+  /** 展示-评分卡 / 仪表盘（REQ-068、REQ-078）：标签热度 + 逐人置信度。 */
   async interestScoreCards(): Promise<ApiEnvelope<InterestScoreCard[]>> {
-    return notWired('兴趣评分卡（REQ-068）');
+    const res = await request<WireScoreCards>('GET', '/interests/score-cards');
+    if (!res.ok) return res;
+    const cards = res.data.cards.map((row) => ({
+      tagId: row.tagId,
+      name: row.name,
+      category: dimensionOf(row.dimension),
+      heat: row.heat,
+      peopleCount: row.peopleCount,
+      perPerson: row.perPerson,
+    }));
+    rememberTags(cards);
+    rememberPeople(res.data.cards.flatMap((card) => card.perPerson.map((person) => ({ personId: person.personId, name: person.name }))));
+    return { ok: true, data: cards };
+  },
+
+  /** 本模块自有：读取外壳设置（模型服务 / 采集 / 日志；密钥只写不读回）。 */
+  async settings(): Promise<ApiEnvelope<SettingsView>> {
+    return request<SettingsView>('GET', '/settings');
+  },
+
+  /** 本模块自有：保存设置（部分字段补丁；`apiKey` 不传表示保持原值）。 */
+  async saveSettings(patch: SettingsPatch): Promise<ApiEnvelope<SettingsView>> {
+    return request<SettingsView>('PUT', '/settings', { body: patch });
   },
 
   /** 数据量（首屏与设置页展示，非契约接口） */

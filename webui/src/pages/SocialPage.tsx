@@ -14,7 +14,7 @@
  *   · 标签增删改（REQ-056）与性格标签确认（REQ-074 ~ REQ-077）
  *   · 人-人关系图谱（REQ-069）与兴趣时间轴 / 事件流（REQ-067，仅可视化，不参与权重 —— REQ-087）
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Compass, HeartHandshake, Link2, Tags, UserRound, Users } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
@@ -32,16 +32,28 @@ type Direction = SocialDirection;
 
 export default function SocialPage() {
   const [direction, setDirection] = useState<Direction>('forward');
-  const [personId, setPersonId] = useState('p_陈禹哲');
-  const [pairA, setPairA] = useState('p_陈禹哲');
-  const [pairB, setPairB] = useState('p_杨贺尧');
+  const [personId, setPersonId] = useState('');
+  const [pairA, setPairA] = useState('');
+  const [pairB, setPairB] = useState('');
   const [extraTab, setExtraTab] = useState<'none' | 'graph' | 'timeline' | 'alignment' | 'mine'>('none');
 
   const graph = useApi(() => api.relationGraph(), []);
   const cards = useApi(() => api.interestScoreCards(), []);
   const mine = useApi(() => api.myCompatibility(), []);
+  const roster = useApi(() => api.memberRoster(), []);
 
-  const people = graph.data?.nodes.filter((n) => !n.unknown) ?? [];
+  // 成员列表来自「人的名单」（REQ-050）：未知成员也列出、不做推测（REQ-081）
+  const people = roster.data ?? [];
+
+  // 默认选中：名单就绪后落到真实成员（此前的示例标识已移除）
+  useEffect(() => {
+    const first = people[0];
+    if (first === undefined) return;
+    const ids = new Set(people.map((person) => person.personId));
+    setPersonId((prev) => (prev.length > 0 && ids.has(prev) ? prev : first.personId));
+    setPairA((prev) => (prev.length > 0 && ids.has(prev) ? prev : first.personId));
+    setPairB((prev) => (prev.length > 0 && ids.has(prev) ? prev : (people[1]?.personId ?? first.personId)));
+  }, [people]);
 
   return (
     <div className="space-y-5">
