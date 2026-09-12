@@ -222,7 +222,7 @@ export function normalizeConfig(raw: unknown): { config: ShellConfig; issues: st
           DEFAULT_CONFIG.model.taskConcurrency,
           'model.taskConcurrency',
           issues,
-          { min: 1, max: 8 },
+          { min: 1, max: 64 },
         ),
       },
       cli: {

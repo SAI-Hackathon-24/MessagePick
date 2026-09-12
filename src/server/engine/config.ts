@@ -19,7 +19,7 @@ export interface ModelConfig {
   apiKey: string
   /** 模型名（决策 8 的 `model.name`；空 = 未配置，见下方 `resolveModelNotConfigured`）。 */
   name: string
-  /** 模型任务并发上限（1–8；详设 §7）。 */
+  /** 模型任务并发上限（1–64；详设 §7；2026-09-13 校准）。 */
   taskConcurrency: number
 }
 
