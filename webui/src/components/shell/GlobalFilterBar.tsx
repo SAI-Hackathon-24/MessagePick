@@ -8,7 +8,7 @@
  *   值不提供手工输入；视角开关可切「我（我相关）/ 全局」，默认全局。
  */
 import { useEffect, useRef, useState } from 'react';
-import { CalendarRange, Check, ChevronDown, Layers, Play, Search, UserRound, X } from 'lucide-react';
+import { AlertTriangle, CalendarRange, Check, CheckCircle2, ChevronDown, Layers, Loader2, Play, Search, UserRound, X } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { cn } from '@/lib/cn';
@@ -22,6 +22,9 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
   const [openIdentity, setOpenIdentity] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeMsg, setAnalyzeMsg] = useState<string | null>(null);
+  const [watchingAnalysis, setWatchingAnalysis] = useState(false);
+  const [analysisChip, setAnalysisChip] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
+  const [analysisDetail, setAnalysisDetail] = useState('');
   const groupRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef<HTMLDivElement>(null);
   const identityRef = useRef<HTMLDivElement>(null);
@@ -49,15 +52,83 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
   const runAnalyze = async () => {
     setAnalyzing(true);
     setAnalyzeMsg(null);
+    setAnalysisChip('idle');
     const res = await api.analyze(filter.groupIds);
     setAnalyzing(false);
     if (!res.ok || !res.data) {
       setAnalyzeMsg(`分析未启动：${res.error?.message ?? '未知错误'}`);
       return;
     }
+    setWatchingAnalysis(true);
     setAnalyzeMsg(`已开始分析（${res.data.scope}）· 稍后刷新看结果`);
     setTimeout(() => setAnalyzeMsg(null), 8_000);
   };
+
+  /* 挂载探询：刷新页面时若分析仍在后台进行，继续跟随其状态 */
+  useEffect(() => {
+    let cancelled = false;
+    void api.operations().then((res) => {
+      if (cancelled || !res.ok || !res.data) return;
+      const running = res.data.some((op) => op.kind === 'warmup' && (op.state === 'queued' || op.state === 'running'));
+      if (running) setWatchingAnalysis(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* 分析状态轮询：运行中显示转圈图标；结束后呈现「完成 / 有失败」（提示性旁路，出错静默降速） */
+  useEffect(() => {
+    if (!watchingAnalysis) return;
+    let disposed = false;
+    let timer: number | undefined;
+    let sawRunning = false;
+    let polls = 0;
+    const observed = new Set<string>();
+
+    const poll = async (): Promise<void> => {
+      const res = await api.operations();
+      if (disposed) return;
+      if (!res.ok || !res.data) {
+        timer = window.setTimeout(() => void poll(), 3_000);
+        return;
+      }
+      polls += 1;
+      const warmups = res.data.filter((op) => op.kind === 'warmup');
+      const running = warmups.filter((op) => op.state === 'queued' || op.state === 'running');
+      if (running.length > 0) {
+        sawRunning = true;
+        for (const op of running) observed.add(op.id);
+        setAnalysisDetail([...new Set(running.map((op) => op.scope))].join(' · '));
+        setAnalysisChip('running');
+        timer = window.setTimeout(() => void poll(), 2_000);
+        return;
+      }
+      /* 第一轮可能早于操作登记；未见过运行态且只查了一轮时，再多等一拍再结算 */
+      if (!sawRunning && polls < 2) {
+        timer = window.setTimeout(() => void poll(), 1_000);
+        return;
+      }
+      /* 结算：以观察到的操作（或最近一对）的终态判定「完成 / 有失败」 */
+      const inspected = observed.size > 0 ? warmups.filter((op) => observed.has(op.id)) : warmups.slice(-2);
+      const failed = inspected.some((op) => op.state === 'failed' || op.state === 'partial');
+      setAnalysisChip(failed ? 'failed' : 'done');
+      setWatchingAnalysis(false);
+    };
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [watchingAnalysis]);
+
+  /* 「完成 / 有失败」展示 20 秒后自动隐去；新一轮分析开始时立即覆盖 */
+  useEffect(() => {
+    if (analysisChip !== 'done' && analysisChip !== 'failed') return;
+    const timer = window.setTimeout(() => setAnalysisChip('idle'), 20_000);
+    return () => window.clearTimeout(timer);
+  }, [analysisChip]);
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="global-filter">
@@ -250,6 +321,29 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         <Play size={12} className={analyzing ? 'animate-pulse' : undefined} />
         {analyzing ? '提交中…' : filter.groupIds.length > 0 ? `分析选中 ${filter.groupIds.length} 个群` : '分析全部群'}
       </button>
+      {analysisChip !== 'idle' && (
+        <span
+          data-testid="analysis-status"
+          title={
+            analysisChip === 'running'
+              ? `后台分析进行中：${analysisDetail || '梗分析 + 信息提取'}`
+              : analysisChip === 'done'
+                ? '后台分析已完成；刷新页面可见最新结果'
+                : '后台分析有失败分片；可再次点击「分析」重试'
+          }
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium',
+            analysisChip === 'running' && 'border-amber-500/30 bg-amber-500/10 text-amber-700',
+            analysisChip === 'done' && 'border-jade-500/30 bg-jade-500/10 text-jade-700',
+            analysisChip === 'failed' && 'border-coral-500/30 bg-coral-500/10 text-coral-600',
+          )}
+        >
+          {analysisChip === 'running' && <Loader2 size={13} className="animate-spin" />}
+          {analysisChip === 'done' && <CheckCircle2 size={13} />}
+          {analysisChip === 'failed' && <AlertTriangle size={13} />}
+          {analysisChip === 'running' ? '分析中…' : analysisChip === 'done' ? '分析完成' : '分析有失败'}
+        </span>
+      )}
       {analyzeMsg && (
         <span data-testid="analysis-msg" className="mp-meta text-jade-700">
           {analyzeMsg}

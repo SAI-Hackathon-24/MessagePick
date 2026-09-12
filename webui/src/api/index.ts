@@ -182,6 +182,18 @@ export interface DataVolume {
   extracts: number;
 }
 
+/** 外壳操作快照（非契约接口 `/api/operations`；字段与 mod-004 §5.2 的 ShellOperation 同构）。 */
+export interface OperationSnapshot {
+  id: string;
+  kind: 'ingest' | 'deletion' | 'warmup' | 'generation';
+  scope: string;
+  state: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
+  counts: { done: number; total?: number };
+  error?: { code: string; message: string };
+  startedAt: number;
+  updatedAt: number;
+}
+
 /** 外壳设置视图（GET/PUT `/api/settings`；密钥只写不读回）。 */
 export interface SettingsView {
   model: { baseUrl: string; name: string; apiKeyConfigured: boolean; taskConcurrency: number };
@@ -596,6 +608,12 @@ export const api = {
     return request<{ started: boolean; scope: string }>('POST', '/analyze', {
       body: groupIds.length > 0 ? { groupIds } : {},
     });
+  },
+
+  /** 外壳操作快照（非契约接口）：后台分析的状态提示轮询用。 */
+  async operations(): Promise<ApiEnvelope<OperationSnapshot[]>> {
+    const res = await request<{ operations: OperationSnapshot[] }>('GET', '/operations');
+    return res.ok ? { ok: true, data: res.data.operations } : res;
   },
 
   /** 本模块自有：读取外壳设置（模型服务 / 采集 / 日志；密钥只写不读回）。 */
