@@ -35,7 +35,7 @@ export function buildMessages(args: {
   }
 
   sections.push(`# 输入单元\n${units.map(renderUnit).join('\n\n')}`)
-  sections.push('# 输出\n只输出 {"items": [ ... ]} 的 JSON；每个条目携带 sourceRefs（输入单元编号或标识）。')
+  sections.push('# 输出\n只输出 {"items": [ ... ]} 的 JSON；每个条目必须携带 sourceRefs（输入单元编号，如 [1, 3]）。')
 
   return [
     { role: 'system', content: protocolPreamble() },
@@ -43,6 +43,8 @@ export function buildMessages(args: {
   ]
 }
 
+/** 单元文本：只给编号与内容。不展示长标识 —— 模型对长随机串的“照抄”极不可靠，
+ *  实测会编造同格式但不存在的标识导致条目全量丢弃（编号→标识的映射由解析层完成）。 */
 function renderUnit(unit: NormalizedUnit): string {
-  return `【输入单元 ${unit.marker}】\n标识: ${unit.id}\n内容:\n${unit.text}`
+  return `【输入单元 ${unit.marker}】\n内容:\n${unit.text}`
 }

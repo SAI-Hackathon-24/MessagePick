@@ -152,5 +152,5 @@ describe('MOD-003 并发与排队', () => {
 })
 
 function startedUnitIds(service: { calls: Array<{ messages: Array<{ content: string }> }> }): string[] {
-  return service.calls.map((call) => /标识: (\S+)/.exec(call.messages[1]?.content ?? '')?.[1] ?? '?')
+  return service.calls.map((call) => /内容 (\S+)/.exec(call.messages[1]?.content ?? '')?.[1] ?? '?')
 }

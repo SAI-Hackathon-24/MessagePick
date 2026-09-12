@@ -39,8 +39,16 @@ import { ENGINE_LIMITS } from './policy/limits'
 import { PROTOCOL_VERSION } from './prompt/protocol'
 import { taskRefFromEnvelope, taskScope } from './task-ref'
 
+/** 外壳接线的日志出口（默认丢弃；`setEngineLogger` 由外壳在启动时调用）。 */
+let engineLogSink: EngineLogSink = createNoopLogSink()
+
+/** 接线引擎日志出口（详设 §6.1：日志格式与落点由外壳决定）。 */
+export function setEngineLogger(sink: EngineLogSink): void {
+  engineLogSink = sink
+}
+
 /** 进程级默认引擎实例（包装好的模块出口函数都绑定到它）。 */
-export const engine: Engine = createEngine()
+export const engine: Engine = createEngine({ logger: (entry) => engineLogSink(entry) })
 
 /** `API-007` 执行任务（统一执行五类模型任务并返回结果与引用）。 */
 export function executeTask(req: Api007Request): Promise<TaskOutcome> {

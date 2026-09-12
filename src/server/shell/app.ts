@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 
-import { configureEngine, notifyDataEpoch, shutdownEngine } from '@server/engine'
+import { configureEngine, notifyDataEpoch, setEngineLogger, shutdownEngine } from '@server/engine'
 import { createExtractModule, type ExtractModule } from '@server/extract'
 import { createIngestModule, type IngestModule } from '@server/ingest'
 import { createMemeModule, type MemeModule } from '@server/meme'
@@ -380,6 +380,11 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   }
 
   applyEngineConfig(config)
+
+  // 引擎日志接线（详设 §6.1：日志格式与落点由外壳决定；条目名加 `engine.` 前缀）
+  setEngineLogger((entry) => {
+    logger[entry.level](`engine.${entry.event}`, entry.fields)
+  })
 
   const boundPort = { value: options.port ?? config.server.port }
   const requestIds = new WeakMap<object, string>()
@@ -1068,95 +1073,118 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
    * 每模块一条 `kind='warmup'` 操作（scope = 模块 ID）；预热失败**不阻塞**
    * update 响应（后台跑，失败只收敛操作状态）。
    */
-  function runWarmup(): void {
+  /**
+   * 采集完成后的预热（HLD 决策 9；`mod-004-app-shell.md` §4.5）。
+   *
+   * 产品口径：**导入只入库，不默认全量分析**。
+   * 分析（梗识别 / 抽取 / 画像）要为每个群逐人调用模型（实测 22 个群时阶段 3 需
+   * 997 次调用、约 20 分钟），默认全量开跑会让「点一下更新」变成长时间无响应的黑盒。
+   * 因此 `ingest.analysisGroupIds` 为空时**不发起任何分析**；非空时只分析选定的群。
+   *
+   * 调用面（§4.5）：MOD-005 `startBatch('ingestDone', scope)`、MOD-006 `run()`、
+   * MOD-007 无入参取数预热；MOD-008 不参与后台预热。
+   * 每模块一条 `kind='warmup'` 操作；预热失败**不阻塞** update 响应。
+   */
+  async function runWarmup(): Promise<void> {
     if (!config.ingest.autoTriggerAfterIngest) return
 
-    /**
-     * 产品口径（本次变更）：**导入只入库，不默认全量分析**。
-     *
-     * 分析（梗识别 / 抽取 / 画像）要为每个群逐人调用模型：实测 22 个群时阶段 3
-     * 需 997 次调用、约 20 分钟。默认对全部群开跑会让「点一下更新」变成长时间
-     * 无响应的黑盒。因此：
-     *   · `ingest.analysisGroupIds` 为空 → **不发起任何分析**，只完成入库；
-     *   · 非空 → 只对选定的群发起分析（界面上的「待分析群」，可多选）。
-     * 界面上由使用者选择要看哪些群；服务端只负责按选择执行。
-     */
     const analysisGroupIds = config.ingest.analysisGroupIds
     if (analysisGroupIds.length === 0) {
       logger.info('warmup.skipped', { module: 'MOD-004', reason: '未选择待分析群', scope: 'MOD-005/006/007' })
       return
     }
-    /** 传给模块的群范围（`ScopeFilter` = `SharedFilter`）：空数组等于不限，因此这里必然非空。 */
+    /** 传给模块的群范围（`ScopeFilter` = `SharedFilter`）；空数组等于不限，故此处必然非空。 */
     const scope: SharedFilter = { groupIds: [...analysisGroupIds] }
     logger.info('warmup.scope', { module: 'MOD-004', groups: analysisGroupIds.length })
 
-    const warm = (moduleId: string, task: () => Promise<unknown>, settle: (value: unknown) => { state: ShellOperation['state']; error?: ErrorEnvelope }): void => {
-      const id = tracker.start({ kind: 'warmup', scope: moduleId })
+    // MOD-005：后台批量生成梗（仅选定群）；等待批次结束以便统计成功/失败明细
+    const memeRun = (async () => {
+      const id = tracker.start({ kind: 'warmup', scope: '梗分析' })
       tracker.update(id, { state: 'running' })
-      /**
-       * ⚠️ 必须先包一层 `Promise.resolve().then(task)` 再挂 `.catch`：
-       * 部分模块入口（如 `meme.startBatch`）是**同步抛错**，
-       * 直接 `task().catch()` 会在挂上 catch 之前就抛出，冒泡成 update 的 500 ——
-       * 那就违背了「预热失败不阻塞更新响应」。
-       */
-      void Promise.resolve()
-        .then(task)
-        .then((value) => {
-          const next = settle(value)
-          tracker.update(id, next.error === undefined ? { state: next.state } : { state: next.state, error: next.error })
+      try {
+        const handle = meme.startBatch('ingestDone', scope)
+        const result = await handle.done
+        const done = result.items.filter((item) => item.status === 'succeeded').length
+        const failedItems = result.items.filter((item) => item.status === 'failed')
+        if (failedItems.length > 0) {
+          const first = failedItems[0]
+          logger.warn('warmup.meme.failures', {
+            count: failedItems.length,
+            itemId: first?.itemId,
+            code: first?.error?.code,
+            message: first?.error?.message,
+            scope: first?.error?.scope,
+          })
+        }
+        tracker.update(id, {
+          state: result.status === 'succeeded' ? 'succeeded' : result.status === 'failed' && done === 0 ? 'failed' : 'partial',
+          counts: { done, total: result.items.length },
+          ...(result.error === undefined ? {} : { error: result.error }),
         })
-        .catch((error: unknown) => {
-          tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, `warmup:${moduleId}`) })
-          logger.warn('warmup.failed', { module: moduleId, error: error instanceof Error ? error.message : String(error) })
-        })
-    }
+      } catch (error) {
+        tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:meme') })
+        logger.warn('warmup.failed', { module: 'MOD-005', error: error instanceof Error ? error.message : String(error) })
+      }
+    })()
 
-    // MOD-005：后台批量生成梗（仅选定群）
-    warm('MOD-005', () => Promise.resolve(meme.startBatch('ingestDone', scope)), () => ({ state: 'succeeded' }))
+    // MOD-006：抽取一批。**不传窗口** —— 窗口语义由该模块按增量水位推导
+    // （§4.5 原文）；自造 `{from: now, to: now}` 会得到零宽窗口，首次抽取必然扫不到数据。
+    const extractRun = (async () => {
+      const id = tracker.start({ kind: 'warmup', scope: '信息提取' })
+      tracker.update(id, { state: 'running' })
+      try {
+        const result = await extract.run()
+        const done = result.failures.length === 0 ? 1 : 0
+        if (result.failures.length > 0) {
+          const first = result.failures[0]
+          logger.warn('warmup.extract.failures', {
+            count: result.failures.length,
+            group: first?.group,
+            code: first?.code,
+            reason: first?.reason,
+          })
+        }
+        tracker.update(id, {
+          state: result.status === 'succeeded' ? 'succeeded' : 'partial',
+          counts: { done, total: 1 },
+        })
+      } catch (error) {
+        tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:extract') })
+        logger.warn('warmup.failed', { module: 'MOD-006', error: error instanceof Error ? error.message : String(error) })
+      }
+    })()
 
     /**
-     * MOD-006：抽取一批。
+     * MOD-007：无入参取数预热（触发该模块的懒构建与缓存）。
      *
-     * ⚠️ **不传窗口**：窗口语义由该模块按自己的增量水位推导（§4.5 原文
-     * 「窗口语义按该模块的增量水位口径，本模块只传采集完成时刻」）。
-     * 该模块的 `deriveWindow` 在**首次**运行时给 `{from: 0, to: now}`（扫全量），
-     * 之后给 `{from: 水位 - 重叠窗口, to: now}`。
-     * 若这里自己拼一个 `{from: completedAt, to: completedAt}`，窗口宽度为 0 ——
-     * 首次抽取必然一条都扫不到（实测就是这样）。
+     * ⚠️ 需要重试：该模块的索引快照在**构建阶段 8 才物化**，而预热与构建几乎同时发起
+     * （实测构建开始 573 ms 后就调用 `API-023`）→ 快照未建立、`me()` 为空 →
+     * `IDENTITY_NOT_READY`。这不是真失败。只对该错误码重试，其余立即收敛。
+     * 注意构建本身可能耗时数分钟（逐人模型调用），因此退避窗口要足够长。
      */
-    warm(
-      'MOD-006',
-      () => extract.run(),
-      (value) => {
-        const result = value as { status?: string } | undefined
-        return { state: result?.status === 'failed' ? 'failed' : 'succeeded' }
-      },
-    )
-
-    /**
-     * MOD-007：无入参取数预热（触发该模块的懒构建与缓存），两条都是读路径。
-     *
-     * ⚠️ 需要重试：该模块的**索引快照在构建阶段 8 才物化**，而预热与构建几乎同时发起
-     * （实测构建开始 573 ms 后就调用 `API-023`）→ 快照还没建立，`me()` 为空 →
-     * `IDENTITY_NOT_READY`。这不是真失败，等构建收敛即可。
-     * 只对 `IDENTITY_NOT_READY` 重试；其余错误立即收敛，避免掩盖真实问题。
-     */
-    warm(
-      'MOD-007',
-      async () => {
-        const delays = [1_500, 3_000, 5_000, 8_000]
+    const socialRun = (async () => {
+      const id = tracker.start({ kind: 'warmup', scope: '社交画像' })
+      tracker.update(id, { state: 'running' })
+      const delays = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000]
+      try {
         for (let attempt = 0; ; attempt += 1) {
           try {
-            return await Promise.all([social.getMyAffinity(), social.listIdentityCandidates()])
+            await Promise.all([social.getMyAffinity(), social.listIdentityCandidates()])
+            break
           } catch (error) {
             const code = (error as { code?: string }).code
             if (code !== 'IDENTITY_NOT_READY' || attempt >= delays.length) throw error
             await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
           }
         }
-      },
-      () => ({ state: 'succeeded' }),
-    )
+        tracker.update(id, { state: 'succeeded' })
+      } catch (error) {
+        tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:social') })
+        logger.warn('warmup.failed', { module: 'MOD-007', error: error instanceof Error ? error.message : String(error) })
+      }
+    })()
+
+    await Promise.all([memeRun, extractRun, socialRun])
   }
 
   async function runIngest(req: Request, res: Response, request: Api001Request): Promise<void> {

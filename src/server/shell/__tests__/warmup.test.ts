@@ -72,10 +72,20 @@ const fakeExtract = {
 } as unknown as ExtractModule
 
 const fakeMeme = {
+  /**
+   * 真实 `startBatch` 返回 `BatchHandle`（`{ batchId, cause, status(), items(), done }`），
+   * 外壳 `await handle.done` 取批次结果，因此替身必须给 `done`。
+   */
   startBatch: (cause: unknown, scope: unknown) => {
     calls.startBatch.push({ cause, scope })
     if (failWarmup) throw new Error('梗批次预热失败（替身）')
-    return { batchId: 'mb1' }
+    return {
+      batchId: 'mb1',
+      cause,
+      status: () => 'succeeded',
+      items: () => [],
+      done: Promise.resolve({ batchId: 'mb1', status: 'succeeded', items: [], failures: [] }),
+    }
   },
   queryCloud: async () => ({ terms: [], legend: [], sourceMessageIds: [], truncated: false, total: 0 }),
   queryLifecycle: async () => ({ rows: [], leadingMemes: [], truncated: false, total: 0 }),
@@ -198,11 +208,11 @@ describe('采集完成后的预热（§4.5）', () => {
     expect(calls.fit).toBeGreaterThan(0)
     expect(calls.candidates).toBeGreaterThan(0)
 
-    // 每模块一条 warmup 登记，scope 为模块 ID
+    // 每模块一条 warmup 登记；scope 用界面可见的中文名（梗分析 / 信息提取 / 社交画像）
     const scopes = warmups.map((op) => op['scope'])
-    expect(scopes).toContain('MOD-005')
-    expect(scopes).toContain('MOD-006')
-    expect(scopes).toContain('MOD-007')
+    expect(scopes).toContain('梗分析')
+    expect(scopes).toContain('信息提取')
+    expect(scopes).toContain('社交画像')
   })
 
   it('未选择待分析群时**不发起任何分析**（导入只入库）', async () => {
