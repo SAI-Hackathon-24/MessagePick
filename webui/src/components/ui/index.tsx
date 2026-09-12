@@ -1,36 +1,22 @@
-import { AlertCircle, Inbox, Loader2, RefreshCw, type LucideIcon } from 'lucide-react';
+/**
+ * 基础展示单元
+ * 口径：REQ-016 要求四类异常（失败 / 超时 / 无结果 / 无授权）在三个模块与外壳
+ * 呈现一致，因此异常与空态组件集中在这里，由外壳与各模块复用。
+ */
+import { AlertCircle, Inbox, Loader2, RefreshCw, ShieldAlert, type LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
-import { avatarColor, hashCode } from '@/lib/format';
+import { avatarColor } from '@/lib/format';
+import { ERROR_PRESENTATION, type ApiError, type ErrorCode } from '@/types';
 
-/* -------------------------------------------------------------------------- */
-/* Card —— 所有「卡片 unit」的统一容器，可扩展 header / footer / 操作区          */
-/* -------------------------------------------------------------------------- */
-export function Card({
-  children,
-  className,
-  hover,
-  onClick,
-  as = 'div',
-}: {
-  children: ReactNode;
-  className?: string;
-  hover?: boolean;
-  onClick?: () => void;
-  as?: 'div' | 'button';
-}) {
-  // 默认渲染为 div：卡片内部通常还有自己的按钮（如「再生成」「标记完成」），
-  // 若默认渲染成 <button> 会产生 button 嵌套 button 的非法嵌套（React 会告警，
-  // 且各浏览器对嵌套按钮的点击行为不一致）。需要语义化按钮时显式传 as="button"。
-  const Comp = as === 'button' ? 'button' : 'div';
+export function Card({ children, className, hover, onClick }: { children: ReactNode; className?: string; hover?: boolean; onClick?: () => void }) {
   return (
-    <Comp
-      type={Comp === 'button' ? 'button' : undefined}
+    <div
       onClick={onClick}
-      role={Comp === 'div' && onClick ? 'button' : undefined}
-      tabIndex={Comp === 'div' && onClick ? 0 : undefined}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onKeyDown={
-        Comp === 'div' && onClick
+        onClick
           ? (e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
@@ -39,10 +25,10 @@ export function Card({
             }
           : undefined
       }
-      className={cn('mp-card', hover && 'mp-card-hover cursor-pointer', Comp === 'button' && 'text-left', className)}
+      className={cn('mp-card', hover && 'mp-card-hover cursor-pointer', className)}
     >
       {children}
-    </Comp>
+    </div>
   );
 }
 
@@ -65,24 +51,23 @@ export function CardHeader({ title, subtitle, right, icon: Icon }: { title: Reac
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Chip / Badge                                                               */
-/* -------------------------------------------------------------------------- */
 export function Chip({
   children,
   active,
   onClick,
   className,
   count,
+  title,
 }: {
   children: ReactNode;
   active?: boolean;
   onClick?: () => void;
   className?: string;
   count?: number;
+  title?: string;
 }) {
   return (
-    <button type="button" onClick={onClick} className={cn('mp-chip', active && 'mp-chip-active', onClick && 'hover:border-jade-500/30', className)}>
+    <button type="button" title={title} onClick={onClick} className={cn('mp-chip', active && 'mp-chip-active', onClick && 'hover:border-jade-500/30', className)}>
       {children}
       {count !== undefined && <span className={cn('rounded-full px-1.5 text-[10px]', active ? 'bg-jade-500/20' : 'bg-ink-900/[0.06]')}>{count}</span>}
     </button>
@@ -93,24 +78,20 @@ export function Badge({ children, tone = 'neutral', className }: { children: Rea
   const tones = {
     neutral: 'bg-ink-900/[0.06] text-ink-600',
     jade: 'bg-jade-500/12 text-jade-700',
-    amber: 'bg-amber-500/15 text-amber-600',
+    amber: 'bg-amber-500/15 text-amber-700',
     coral: 'bg-coral-500/12 text-coral-500',
-    sky: 'bg-sky-500/12 text-sky-600',
-    violet: 'bg-violet-500/12 text-violet-600',
+    sky: 'bg-sky-500/12 text-sky-700',
+    violet: 'bg-violet-500/12 text-violet-700',
   };
   return <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium', tones[tone], className)}>{children}</span>;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Avatar —— 无外部图片依赖，用首字 + 稳定配色                                   */
-/* -------------------------------------------------------------------------- */
 export function Avatar({ name, src, size = 32, className }: { name: string; src?: string; size?: number; className?: string }) {
-  const color = avatarColor(name);
   return src ? (
     <img src={src} alt={name} width={size} height={size} className={cn('shrink-0 rounded-xl object-cover', className)} />
   ) : (
     <span
-      className={cn('flex shrink-0 items-center justify-center rounded-xl font-semibold ring-1', color, className)}
+      className={cn('flex shrink-0 items-center justify-center rounded-xl font-semibold ring-1', avatarColor(name), className)}
       style={{ width: size, height: size, fontSize: size * 0.42 }}
       title={name}
     >
@@ -119,19 +100,13 @@ export function Avatar({ name, src, size = 32, className }: { name: string; src?
   );
 }
 
-/** 姓名 → 稳定的头像色，供自定义容器复用 */
-export const nameColorSeed = (name: string) => hashCode(name);
-
-/* -------------------------------------------------------------------------- */
-/* 状态：Loading / Empty / Error / Notice —— 异常分支一个都不落                  */
-/* -------------------------------------------------------------------------- */
 export function Skeleton({ className }: { className?: string }) {
   return <div className={cn('mp-skeleton', className)} />;
 }
 
-export function LoadingState({ label = '正在分析…', rows = 3, className }: { label?: string; rows?: number; className?: string }) {
+export function LoadingState({ label = '正在读取…', rows = 3, className }: { label?: string; rows?: number; className?: string }) {
   return (
-    <div className={cn('space-y-3', className)}>
+    <div className={cn('space-y-3', className)} aria-busy="true">
       <div className="flex items-center gap-2 text-sm text-ink-500">
         <Loader2 size={15} className="animate-spin text-jade-500" />
         {label}
@@ -141,25 +116,26 @@ export function LoadingState({ label = '正在分析…', rows = 3, className }:
           <Skeleton className="h-4 w-1/3" />
           <Skeleton className="h-3 w-full" />
           <Skeleton className="h-3 w-4/5" />
-          <div className="flex gap-2 pt-1">
-            <Skeleton className="h-5 w-16 rounded-full" />
-            <Skeleton className="h-5 w-20 rounded-full" />
-          </div>
         </div>
       ))}
     </div>
   );
 }
 
+/** 空态：REQ-016 —— 无结果时给「一键清除筛选」 */
 export function EmptyState({
-  title = '还没有数据',
+  title = '没有符合条件的结果',
   description,
   action,
+  onAction,
+  actionLabel = '清除筛选',
   className,
 }: {
   title?: string;
   description?: string;
   action?: ReactNode;
+  onAction?: () => void;
+  actionLabel?: string;
   className?: string;
 }) {
   return (
@@ -171,34 +147,80 @@ export function EmptyState({
         <div className="text-sm font-semibold text-ink-700">{title}</div>
         {description && <div className="mp-meta mx-auto mt-1 max-w-md">{description}</div>}
       </div>
-      {action}
+      {action ?? (onAction && (
+        <button type="button" onClick={onAction} className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-ink-800">
+          {actionLabel}
+        </button>
+      ))}
     </div>
   );
 }
 
-export function ErrorState({ code, message, hint, onRetry, className }: { code?: string; message: string; hint?: string; onRetry?: () => void; className?: string }) {
+/**
+ * 失败态：按 api-contract §1.2 的错误标识决定呈现方式（REQ-016 统一口径）。
+ * · retry        → 提示 + 重试
+ * · clear-filter → 空态 + 一键清除筛选
+ * · guide-update → 引导完成首次更新
+ * · back         → 返回上一视图
+ * · confirm      → 去完成确认
+ */
+export function ErrorState({
+  error,
+  onRetry,
+  onClearFilter,
+  onGuideUpdate,
+  onBack,
+  className,
+}: {
+  error: ApiError;
+  onRetry?: () => void;
+  onClearFilter?: () => void;
+  onGuideUpdate?: () => void;
+  onBack?: () => void;
+  className?: string;
+}) {
+  const preset = ERROR_PRESENTATION[error.code as ErrorCode] ?? ERROR_PRESENTATION.ANALYSIS_FAILED;
+  const isAuth = error.code === 'NO_AUTH';
+  const Icon = isAuth ? ShieldAlert : AlertCircle;
+  const tone = isAuth ? 'text-amber-600 bg-amber-500/12 border-amber-500/25' : 'text-coral-500 bg-coral-500/10 border-coral-500/25';
+
+  const handlers: Record<string, (() => void) | undefined> = {
+    retry: onRetry,
+    'clear-filter': onClearFilter,
+    'guide-update': onGuideUpdate,
+    back: onBack,
+    confirm: onRetry,
+    inline: undefined,
+  };
+  const onClick = handlers[preset.kind];
+
   return (
-    <div className={cn('rounded-2xl border border-coral-500/25 bg-coral-500/[0.06] px-5 py-6', className)}>
+    <div className={cn('rounded-2xl border px-5 py-6', tone, className)}>
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-coral-500/15 text-coral-500">
-          <AlertCircle size={17} />
+        <span className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl', isAuth ? 'bg-amber-500/15' : 'bg-coral-500/15')}>
+          <Icon size={17} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-ink-800">分析失败</span>
-            {code && <Badge tone="coral">{code}</Badge>}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-ink-800">{preset.title}</span>
+            <Badge tone={isAuth ? 'amber' : 'coral'}>{error.code}</Badge>
           </div>
-          <p className="mt-1 text-sm text-ink-600">{message}</p>
-          {hint && <p className="mp-meta mt-1.5">{hint}</p>}
-          {onRetry && (
+          <p className="mt-1 text-sm text-ink-600">{error.message}</p>
+          {error.hint && <p className="mp-meta mt-1.5">{error.hint}</p>}
+          {preset.action && onClick && (
             <button
               type="button"
-              onClick={onRetry}
+              onClick={onClick}
               className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-ink-800"
             >
               <RefreshCw size={13} />
-              重新分析
+              {preset.action}
             </button>
+          )}
+          {isAuth && (
+            <p className="mp-meta mt-2 leading-relaxed">
+              若提示未初始化，请在终端先执行一次：<span className="font-mono text-ink-600">wechat-cli init</span>（需管理员 / root 权限），完成后回到本页重试。
+            </p>
           )}
         </div>
       </div>
@@ -206,41 +228,39 @@ export function ErrorState({ code, message, hint, onRetry, className }: { code?:
   );
 }
 
-export function NoticeBar({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={cn('rounded-xl border border-amber-500/25 bg-amber-500/[0.08] px-3.5 py-2 text-xs text-amber-700', className)}>{children}</div>
-  );
+export function NoticeBar({ children, tone = 'amber', className }: { children: ReactNode; tone?: 'amber' | 'jade' | 'sky' | 'coral'; className?: string }) {
+  const tones = {
+    amber: 'border-amber-500/25 bg-amber-500/[0.08] text-amber-800',
+    jade: 'border-jade-500/25 bg-jade-500/[0.07] text-jade-800',
+    sky: 'border-sky-500/25 bg-sky-500/[0.07] text-sky-800',
+    coral: 'border-coral-500/25 bg-coral-500/[0.07] text-coral-500',
+  };
+  return <div className={cn('rounded-xl border px-3.5 py-2 text-xs leading-relaxed', tones[tone], className)}>{children}</div>;
 }
 
-/* -------------------------------------------------------------------------- */
-/* 分组标题                                                                    */
-/* -------------------------------------------------------------------------- */
 export function SectionHeading({ title, hint, right }: { title: string; hint?: string; right?: ReactNode }) {
   return (
     <div className="mb-3 flex items-end justify-between gap-4">
-      <div>
+      <div className="min-w-0">
         <h2 className="text-[15px] font-semibold text-ink-800">{title}</h2>
         {hint && <p className="mp-meta mt-0.5">{hint}</p>}
       </div>
-      {right}
+      {right && <div className="shrink-0">{right}</div>}
     </div>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* 统计数字                                                                    */
-/* -------------------------------------------------------------------------- */
 export function Stat({ label, value, unit, hint, tone = 'jade', icon: Icon }: { label: string; value: ReactNode; unit?: string; hint?: string; tone?: 'jade' | 'amber' | 'coral' | 'ink'; icon?: LucideIcon }) {
   const tones = {
     jade: 'text-jade-600 bg-jade-500/10',
-    amber: 'text-amber-600 bg-amber-500/12',
+    amber: 'text-amber-700 bg-amber-500/12',
     coral: 'text-coral-500 bg-coral-500/10',
     ink: 'text-ink-600 bg-ink-900/[0.06]',
   };
   return (
     <div className="mp-card flex items-center gap-3 px-4 py-3.5">
       {Icon && (
-        <span className={cn('flex h-9 w-9 items-center justify-center rounded-xl', tones[tone])}>
+        <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', tones[tone])}>
           <Icon size={17} />
         </span>
       )}
@@ -256,9 +276,16 @@ export function Stat({ label, value, unit, hint, tone = 'jade', icon: Icon }: { 
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* 进度（分析中）                                                              */
-/* -------------------------------------------------------------------------- */
+export function MiniStat({ label, value, tone = 'ink' }: { label: string; value: ReactNode; tone?: 'ink' | 'jade' | 'amber' | 'coral' }) {
+  const tones = { ink: 'text-ink-700', jade: 'text-jade-600', amber: 'text-amber-700', coral: 'text-coral-500' };
+  return (
+    <div className="rounded-xl border border-ink-900/[0.06] bg-white/60 px-3 py-2">
+      <div className="mp-meta">{label}</div>
+      <div className={cn('mt-0.5 text-sm font-semibold tabular-nums', tones[tone])}>{value}</div>
+    </div>
+  );
+}
+
 export function ProgressBar({ percent, label }: { percent: number; label?: string }) {
   return (
     <div className="space-y-1.5">
@@ -270,10 +297,24 @@ export function ProgressBar({ percent, label }: { percent: number; label?: strin
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* 抽屉（梗详情 / 通知详情复用）                                                */
-/* -------------------------------------------------------------------------- */
-export function Drawer({ open, onClose, title, subtitle, children, footer, width = 'max-w-2xl' }: { open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; footer?: ReactNode; width?: string }) {
+/** 抽屉：梗单元 / 消息详情 / 成员画像复用 */
+export function Drawer({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  width = 'max-w-2xl',
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  width?: string;
+}) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -303,4 +344,9 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
       </aside>
     </div>
   );
+}
+
+/** 术语提示：REQ-017 要求不混用两个「词云」与两个时间轴视图 */
+export function TermHint({ children }: { children: ReactNode }) {
+  return <span className="mp-meta" title={typeof children === 'string' ? children : undefined}>{children}</span>;
 }

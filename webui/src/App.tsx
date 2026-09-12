@@ -1,62 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+/**
+ * 应用入口与路由
+ * =============================================================================
+ * 三个模块并列交付、互不依赖（REQ-018、AC-040）：任一路由的加载失败都不影响其它路由。
+ * 全局筛选、更新入口、首屏引导与异常统一呈现都在 AppShell（MOD-004）。
+ */
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { getSimMode, setSimMode as persistSim, type SimMode } from '@/api';
-import { AppStateContext, type AppState } from '@/app/appState';
-import { AppShell } from '@/components/layout/AppShell';
-import InboxPage from '@/pages/InboxPage';
-import InsightPage from '@/pages/InsightPage';
-import MemePage from '@/pages/MemePage';
+import { AppStateProvider } from '@/state/appState';
+import { AppShell } from '@/components/shell/AppShell';
 import OverviewPage from '@/pages/OverviewPage';
+import MemePage from '@/pages/MemePage';
+import ExtractPage from '@/pages/ExtractPage';
 import SocialPage from '@/pages/SocialPage';
 
-/** 演示数据的时间基准，与 mockData 的 RANGE_START/END 保持一致 */
-const DEFAULT_RANGE = { start: '2026-03-01', end: '2026-06-09' };
-
 export default function App() {
-  const [chats, setChats] = useState<string[]>([]);
-  const [range, setRange] = useState(DEFAULT_RANGE);
-  const [sim, setSimState] = useState<SimMode>(getSimMode());
-
-  const setSim = useCallback((s: SimMode) => {
-    persistSim(s);
-    setSimState(s);
-  }, []);
-
-  useEffect(() => {
-    const onChange = (e: Event) => setSimState((e as CustomEvent<SimMode>).detail);
-    window.addEventListener('mp:sim', onChange);
-    return () => window.removeEventListener('mp:sim', onChange);
-  }, []);
-
-  const toggleChat = useCallback((chat: string) => {
-    setChats((prev) => (prev.includes(chat) ? prev.filter((c) => c !== chat) : [...prev, chat]));
-  }, []);
-
-  const value: AppState = useMemo(
-    () => ({ chats, setChats, toggleChat, range, setRange, sim, setSim }),
-    [chats, toggleChat, range, sim, setSim],
-  );
-
   return (
-    <AppStateContext.Provider value={value}>
-      <HashRouter
-        future={{
-          // 提前打开 v7 行为，消除 React Router 的 future flag 告警
-          v7_startTransition: true,
-          v7_relativeSplatPath: true,
-        }}
-      >
+    <AppStateProvider>
+      <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<OverviewPage />} />
             <Route path="meme" element={<MemePage />} />
-            <Route path="inbox" element={<InboxPage />} />
+            <Route path="extract" element={<ExtractPage />} />
             <Route path="social" element={<SocialPage />} />
-            <Route path="insight" element={<InsightPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </HashRouter>
-    </AppStateContext.Provider>
+    </AppStateProvider>
   );
 }
