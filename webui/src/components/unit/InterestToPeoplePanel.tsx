@@ -6,7 +6,7 @@
  * 可勾选候选人 → 生成组局建议（REQ-063，仅文字建议）。
  */
 import { useState } from 'react';
-import { Clock, Sparkles, Users } from 'lucide-react';
+import { Activity, Clock, Sparkles, Users } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
@@ -77,7 +77,7 @@ export function InterestToPeoplePanel() {
             </div>
           )}
           <p className="mp-meta">
-            匹配范围为跨全部已采集的历史群（REQ-051）；结果中会给出每人的回复时长与活跃度，用来判断「找他要等多久」（REQ-065）。
+            匹配范围为跨全部已采集的历史群（REQ-051）；结果中会给出每人的回复时长、发言量与活跃度综合分，用来判断「找他要等多久、他还活跃吗」（REQ-065）。
           </p>
         </div>
       </Card>
@@ -133,7 +133,11 @@ export function InterestToPeoplePanel() {
                             <Clock size={10} /> 回复时长 {p.replyMedianMinutes !== undefined ? `${p.replyMedianMinutes} 分` : '样本不足'}
                           </span>
                           <span className="inline-flex items-center gap-1">
-                            <Users size={10} /> 活跃度 {p.activity}
+                            <Users size={10} /> 发言 {p.activity} 条
+                          </span>
+                          <span className="inline-flex items-center gap-1" title="活跃度综合分 = 消息条数 50% + 平均回复时长 30% + 活跃新鲜度 20%">
+                            <Activity size={10} /> 活跃度{' '}
+                            {p.activityScore?.insufficient ? '数据不足' : (p.activityScore?.score ?? '—')}
                           </span>
                         </div>
                       </div>

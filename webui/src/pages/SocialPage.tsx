@@ -93,7 +93,7 @@ export default function SocialPage() {
                     <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-jade-500/12 text-xs font-semibold text-jade-700">{p.name.slice(0, 1)}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-medium text-ink-700">{p.name}</span>
-                      <span className="mp-meta">活跃度 {p.activity}</span>
+                      <span className="mp-meta">发言 {p.activity} 条</span>
                     </span>
                     {p.isMe && <Badge tone="jade">我</Badge>}
                   </button>

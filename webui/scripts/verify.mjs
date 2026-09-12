@@ -454,6 +454,63 @@ const graphOk = await ev(`(() => {
 })()`);
 rec('人-人图谱', '图谱实际渲染出 canvas（此前的「有统计无图」已修复）', graphOk.canvases > 0, `canvas=${graphOk.canvases} 可切列表=${graphOk.hasList}`);
 
+
+/* ================================================================== */
+/* 新增：二级标签与一级分类的归属校准（开发期假数据的自检）                 */
+/* ================================================================== */
+await goto('#/social/forward');
+const tagCheck = await ev(`(async () => {
+  const fx = await import('/src/api/fixtures.ts');
+  const cat = fx.validateTagCategories();
+  const per = fx.validatePersons();
+  const unk = fx.validateUnknown();
+  const byCat = {};
+  fx.TAGS.forEach(t => { (byCat[t.category] ??= []).push(t.name); });
+  return {
+    catOk: cat.ok, catProblems: cat.problems,
+    perOk: per.ok, perProblems: per.problems,
+    unkOk: unk.ok, unkProblems: unk.problems,
+    total: fx.TAGS.length,
+    byCat,
+    gameOnlyReal: (byCat.game ?? []).every(n => /游戏|桌游|手游|端游|《.+》/.test(n)),
+  };
+})()`);
+rec('分类校准', '全部二级标签的一级归属合法，且「游戏」维度只含具体游戏作品', tagCheck.catOk && tagCheck.gameOnlyReal,
+  `${tagCheck.total} 个标签；问题=${tagCheck.catProblems.length ? tagCheck.catProblems.join('；') : '无'}`);
+rec('分类校准', '游戏 / 娱乐两类的归属符合裁定（算法竞赛类归娱乐）', (tagCheck.byCat.game ?? []).every((n) => !/算法|编程|刷题|竞赛|大模型/.test(n)),
+  `游戏=${(tagCheck.byCat.game ?? []).join('、')}｜娱乐含=${(tagCheck.byCat.entertainment ?? []).filter((n) => /算法|大模型/.test(n)).join('、')}`);
+rec('数据自检', '人标识唯一且未知名单不与已知人员重叠（图谱重复节点的根因）', tagCheck.perOk && tagCheck.unkOk,
+  `人员=${tagCheck.perOk ? '唯一' : tagCheck.perProblems.join('；')} 未知=${tagCheck.unkOk ? '无重叠' : tagCheck.unkProblems.join('；')}`);
+
+/* ================================================================== */
+/* 新增：活跃度悬停明细（含三项原始指标与数据不足分支）                     */
+/* ================================================================== */
+await goto('#/social/forward');
+await sleep(1200);
+// 展开第五根轴（活跃度）的构成明细
+const axisClick = await ev(`(() => {
+  const chips = [...document.querySelectorAll('button')].filter(b => /^活跃度/.test((b.textContent||'').trim()));
+  if (!chips.length) return { ok: false };
+  chips[0].click();
+  return { ok: true, text: (chips[0].textContent||'').trim() };
+})()`);
+await sleep(800);
+const breakdown = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return {
+    hasMessages: /消息条数/.test(t),
+    hasReply: /平均回复时长/.test(t),
+    hasFreshness: /活跃新鲜度/.test(t),
+    hasWeight: /权重/.test(t),
+    hasNormalized: /归一化|分 ·/.test(t),
+    // 逐项判断，避免正则里 + 的多层转义问题
+    hasFormula: /消息条数 50%/.test(t) && /平均回复时长 30%/.test(t) && /活跃新鲜度 20%/.test(t) && /群内最大值/.test(t),
+  };
+})()`);
+rec('活跃度', '展开后可看到三项原始指标明细与权重（不只给总分）',
+  axisClick.ok && breakdown.hasMessages && breakdown.hasReply && breakdown.hasFreshness && breakdown.hasWeight && breakdown.hasFormula,
+  `指标=${[breakdown.hasMessages && '消息条数', breakdown.hasReply && '回复时长', breakdown.hasFreshness && '新鲜度'].filter(Boolean).join('/')} 权重=${breakdown.hasWeight} 口径=${breakdown.hasFormula}`);
+
 console.log('\n===== 汇总 =====');
 const passed = results.filter((r) => r.pass).length;
 console.log(`${passed}/${results.length} 通过`);
