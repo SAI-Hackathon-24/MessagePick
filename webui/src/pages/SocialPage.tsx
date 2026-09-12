@@ -68,10 +68,6 @@ export default function SocialPage() {
     }
   }, [viewParam]);
 
-  useEffect(() => {
-    if (viewParam === 'pair') document.getElementById('social-pair')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [viewParam]);
-
   const graph = useApi(() => api.relationGraph(filter), [JSON.stringify(filter)]);
   const cards = useApi(() => api.interestScoreCards(filter), [JSON.stringify(filter)]);
   const mine = useApi(() => api.myCompatibility(filter), [JSON.stringify(filter)]);
@@ -101,6 +97,9 @@ export default function SocialPage() {
             : '社交画像按群构建：在筛选条选择群聊后自动开始（只跑该群成员，通常几分钟）。'}
         </NoticeBar>
       )}
+      {/* 两人配对为独立视图（/social/pair）：其余区块整段隐藏，避免整页滚动定位到页面底部 */}
+      {viewParam !== 'pair' && (
+        <>
       {/* 指标 */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="参与分析的人数" value={people.length} unit="人" hint="跨全部已采集的历史群（REQ-051）" icon={Users} />
@@ -159,7 +158,14 @@ export default function SocialPage() {
       </div>
 
       {extraTab === 'mine' && <MyCompatibilityPanel />}
-      {extraTab === 'graph' && <RelationGraphPanel />}
+      {extraTab === 'graph' &&
+        (filter.groupIds.length > 0 ? (
+          <RelationGraphPanel filter={filter} />
+        ) : (
+          <NoticeBar tone="sky">
+            人-人关系图谱按「当前选中的群聊」构建：请先在顶部筛选条选择群聊（不选群时节点过多、渲染性能差）。
+          </NoticeBar>
+        ))}
       {extraTab === 'timeline' && <InterestTimelinePanel />}
       {extraTab === 'alignment' && <IdentityAlignmentPanel />}
 
@@ -195,9 +201,11 @@ export default function SocialPage() {
         /* ---------------- 反向：兴趣 → 人（找搭子） ---------------- */
         <InterestToPeoplePanel />
       )}
+        </>
+      )}
 
-      {/* 两人配对（REQ-062；侧边栏「两人配对」定位到此区） */}
-      <div id="social-pair" className="scroll-mt-28">
+      {/* 两人配对（REQ-062；/social/pair 视图只显示本区） */}
+      <div>
         <Card>
           <CardHeader title="两人配对" icon={HeartHandshake} subtitle="共同爱好 + 契合度 + 逐维度差值（雷达叠加对比）" />
           <div className="space-y-3 px-4 py-3.5">
@@ -211,7 +219,8 @@ export default function SocialPage() {
         </Card>
       </div>
 
-      {/* 评分卡（REQ-068、REQ-078） */}
+      {/* 评分卡（REQ-068、REQ-078）——两人配对视图下不展示 */}
+      {viewParam !== 'pair' && (
       <section>
         <SectionHeading title="兴趣评分卡" hint="兴趣热度分 = 该爱好下的人的活跃 / 投入程度；兴趣置信度 = 某人在这项爱好上有多可信" />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -239,6 +248,7 @@ export default function SocialPage() {
           ))}
         </div>
       </section>
+      )}
 
       {/* 边界声明 */}
       <NoticeBar tone="sky" className="leading-relaxed">

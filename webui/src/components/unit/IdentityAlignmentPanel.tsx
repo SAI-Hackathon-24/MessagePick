@@ -5,6 +5,7 @@
  * **人工确认的映射表**：系统给出候选（结合通讯录 / 好友列表），使用者逐条确认 / 否定。
  * **未确认与已否定均不生效** —— 相关人在确认前按各自独立个体处理。
  */
+import { useState } from 'react';
 import { Check, Link2, X } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
@@ -15,6 +16,9 @@ import { Button } from '@/components/shell/Button';
 
 export function IdentityAlignmentPanel() {
   const list = useApi(() => api.alignmentCandidates(), []);
+  /* 分页渲染：候选可能上千且单个候选带数百成员，一次性铺满 DOM 会卡死浏览器
+     （2026-09-13 修复）；每次多渲染 60 条。 */
+  const [limit, setLimit] = useState(30);
 
   const decide = async (candidateId: string, decision: 'confirmed' | 'rejected') => {
     const res = await api.submitAlignment(candidateId, decision);
@@ -25,6 +29,9 @@ export function IdentityAlignmentPanel() {
   // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
   if (list.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;
   if (list.error) return <ErrorState error={list.error} onRetry={list.refetch} />;
+
+  const candidates = list.data ?? [];
+  const rows = candidates.slice(0, limit);
 
   return (
     <Card data-testid="identity-alignment">
@@ -40,7 +47,7 @@ export function IdentityAlignmentPanel() {
         </NoticeBar>
 
         <ul className="space-y-2">
-          {(list.data ?? []).map((c) => (
+          {rows.map((c) => (
             <li key={c.candidateId} className="rounded-2xl border border-ink-900/[0.07] bg-white/70 px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
                 {c.members.map((m, i) => (
@@ -50,6 +57,9 @@ export function IdentityAlignmentPanel() {
                     <span className="mp-meta">{m.groupName}</span>
                   </span>
                 ))}
+                {(c.extraMemberCount ?? 0) > 0 && (
+                  <span className="mp-meta">…等 {c.members.length + (c.extraMemberCount ?? 0)} 位</span>
+                )}
                 <Badge tone="neutral">来源：{SOURCE_LABEL[c.source]}</Badge>
                 <Badge tone={c.status === 'confirmed' ? 'jade' : c.status === 'rejected' ? 'coral' : 'amber'}>{ALIGNMENT_STATUS_LABEL[c.status]}</Badge>
                 {c.confirmedAt && <span className="mp-meta">确认于 {fmtMD(c.confirmedAt)}</span>}
@@ -64,7 +74,14 @@ export function IdentityAlignmentPanel() {
               </div>
             </li>
           ))}
-          {!(list.data ?? []).length && <li><EmptyState title="暂无身份对齐候选" description="候选由系统结合通讯录 / 好友列表生成；若通讯录来源不可用，会给出原因并可手动重试。" /></li>}
+          {candidates.length > limit && (
+            <li className="flex justify-center pt-1">
+              <Button size="sm" variant="outline" onClick={() => setLimit((v) => v + 60)}>
+                显示更多（还有 {candidates.length - limit} 条）
+              </Button>
+            </li>
+          )}
+          {!candidates.length && <li><EmptyState title="暂无身份对齐候选" description="候选由系统结合通讯录 / 好友列表生成；若通讯录来源不可用，会给出原因并可手动重试。" /></li>}
         </ul>
       </div>
     </Card>

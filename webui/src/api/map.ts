@@ -1010,22 +1010,30 @@ export function toMyCompatibility(wire: { pairs: Array<{ personId: string; score
   };
 }
 
+const ALIGN_DISPLAY_MEMBERS_MAX = 8;
+
 export async function toAlignmentList(wire: {
   candidates: Array<{ candidateId: string; memberIds: string[]; source: string; status: string }>;
 }): Promise<import('@/types').IdentityAlignmentCandidate[]> {
-  const memberIds = wire.candidates.flatMap((candidate) => candidate.memberIds);
+  /* 只解析展示所需的前 N 位成员：候选可带数百成员（实测全量 6.6 万条成员引用），
+     之前一次全解析 → 数百批 /api/members + 巨长 DOM，浏览器卡死数秒。 */
+  const memberIds = wire.candidates.flatMap((candidate) => candidate.memberIds.slice(0, ALIGN_DISPLAY_MEMBERS_MAX));
   await Promise.all([ensureGroups(), ensureMembers(memberIds)]);
-  return wire.candidates.map((candidate) => ({
-    candidateId: candidate.candidateId,
-    members: candidate.memberIds.map((memberId) => ({
-      memberId,
-      groupName: groupNameOf(memberNames.get(memberId)?.groupId ?? ''),
-      displayName: memberNameOf(memberId),
-    })),
-    // 契约来源为「通讯录 / 好友列表」；界面 `DataSource` 只有「contacts」一档 → 归入之
-    source: 'contacts' as DataSource,
-    status: (IDENTITY_STATUS as Record<string, 'unconfirmed' | 'confirmed' | 'rejected'>)[candidate.status] ?? 'unconfirmed',
-  }));
+  return wire.candidates.map((candidate) => {
+    const shown = candidate.memberIds.slice(0, ALIGN_DISPLAY_MEMBERS_MAX);
+    return {
+      candidateId: candidate.candidateId,
+      members: shown.map((memberId) => ({
+        memberId,
+        groupName: groupNameOf(memberNames.get(memberId)?.groupId ?? ''),
+        displayName: memberNameOf(memberId),
+      })),
+      extraMemberCount: Math.max(0, candidate.memberIds.length - shown.length),
+      // 契约来源为「通讯录 / 好友列表」；界面 `DataSource` 只有「contacts」一档 → 归入之
+      source: 'contacts' as DataSource,
+      status: (IDENTITY_STATUS as Record<string, 'unconfirmed' | 'confirmed' | 'rejected'>)[candidate.status] ?? 'unconfirmed',
+    };
+  });
 }
 
 /** 写路径响应：状态回带（界面 `submitAlignment` 的回参形状）。 */

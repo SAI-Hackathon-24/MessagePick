@@ -879,6 +879,8 @@ export interface IdentityAlignmentCandidate {
   /** 未确认与已否定均不生效 */
   status: 'unconfirmed' | 'confirmed' | 'rejected';
   confirmedAt?: string;
+  /** 仅展示层：超出展示上限、未展开的成员数（2026-09-13；候选可带数百成员） */
+  extraMemberCount?: number;
 }
 
 export const ALIGNMENT_STATUS_LABEL: Record<IdentityAlignmentCandidate['status'], string> = {
