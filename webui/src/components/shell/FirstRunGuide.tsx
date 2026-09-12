@@ -3,7 +3,7 @@
  * =============================================================================
  * 未采集到任何数据时显示：说明 + 「更新数据」入口 + 数据去向说明（REQ-012）。
  */
-import { Database, RefreshCw, ShieldCheck, UploadCloud } from 'lucide-react';
+import { Cpu, Database, RefreshCw, ShieldCheck, UploadCloud } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
@@ -11,9 +11,13 @@ import { Button } from './Button';
 import { Card, CardHeader, NoticeBar } from '@/components/ui';
 
 export function FirstRunGuide() {
-  const { triggerUpdate, updating, updateNotice, refreshStatus } = useAppState();
+  const { triggerUpdate, updating, updateNotice, refreshStatus, setSettingsOpen } = useAppState();
   const flow = useApi(() => api.dataFlowNotice(), []);
   const status = useApi(() => api.updateStatus(), []);
+  const settings = useApi(() => api.settings(), []);
+  const cfgModel = settings.data?.model;
+  const modelReady =
+    cfgModel !== undefined && cfgModel.baseUrl.length > 0 && cfgModel.name.length > 0 && cfgModel.apiKeyConfigured;
 
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center gap-4 px-4 py-10">
@@ -54,6 +58,29 @@ export function FirstRunGuide() {
             若提示未初始化：请先在终端执行一次 <span className="font-mono text-ink-600">wechat-cli init</span>（需管理员 / root 权限，且微信桌面客户端保持运行），
             完成后回到本页重新检查。
           </p>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="配置模型服务" icon={Cpu} subtitle="梗分析 / 信息提取 / 社交画像的 AI 任务依赖模型服务；采集与浏览本身不需要" />
+        <div className="space-y-2.5 px-4 py-4">
+          {cfgModel === undefined ? (
+            <p className="mp-meta">正在读取设置…</p>
+          ) : modelReady ? (
+            <p className="text-xs leading-relaxed text-ink-600">
+              已配置：{cfgModel.baseUrl}（{cfgModel.name}；密钥已保存）——分析任务可以正常运行。
+            </p>
+          ) : (
+            <>
+              <p className="text-xs leading-relaxed text-ink-600">
+                尚未配置模型服务（<strong>服务地址 / 模型名 / API 密钥三项缺一不可</strong>）。未配置时「更新数据」仍可正常采集，
+                但三个模块不会产出任何分析结果（分析任务会失败）。
+              </p>
+              <Button data-testid="first-run-model-config" onClick={() => setSettingsOpen(true)} icon={Cpu}>
+                去配置模型服务
+              </Button>
+            </>
+          )}
         </div>
       </Card>
 
