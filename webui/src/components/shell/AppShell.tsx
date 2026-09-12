@@ -13,7 +13,6 @@ import { BarChart3, Clock3, HeartHandshake, Info, LayoutDashboard, MessageSquare
 import { useAppState } from '@/state/appState';
 import { cn } from '@/lib/cn';
 import { fmtMD } from '@/lib/format';
-import { apiMode } from '@/api';
 import { MODULE_LABEL } from '@/types';
 import { GlobalFilterBar } from './GlobalFilterBar';
 import { Badge, NoticeBar } from '@/components/ui';
@@ -111,15 +110,6 @@ export function AppShell() {
             <button type="button" onClick={dismissUpdateNotice} className="shrink-0 text-[11px] text-sky-700 hover:underline">
               知道了
             </button>
-          </NoticeBar>
-        )}
-
-        {apiMode() === 'mock' && (
-          <NoticeBar tone="amber" className="mb-4">
-            当前运行在 <strong>开发期数据模式</strong>（后端 MOD-001 ~ MOD-008 尚未实现）。
-            界面与数据均严格按 <span className="font-mono">docs/design</span> 的接口契约与数据模型产出；
-            接真实后端时把 <span className="font-mono">VITE_API_MODE</span> 设为 <span className="font-mono">http</span> 并删除
-            <span className="font-mono"> src/api/fixtures.ts</span>、<span className="font-mono">src/api/mock.ts</span>（REQ-019：不做演示数据版本）。
           </NoticeBar>
         )}
 

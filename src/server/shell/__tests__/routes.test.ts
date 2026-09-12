@@ -6,7 +6,8 @@
  * 覆盖：读直通与筛选 / 分页参数解析、写令牌守卫、入参校验、统一信封与 404。
  */
 import { mkdtempSync, rmSync } from 'node:fs'
-import type { AddressInfo, Server } from 'node:net'
+import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 

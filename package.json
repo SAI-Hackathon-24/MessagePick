@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "vite build && tsc --noEmit",
+    "build": "npm --prefix webui run build && tsc --noEmit",
     "dev:server": "tsx watch src/server/main.ts",
     "dev:web": "vite",
     "start": "tsx src/server/main.ts"

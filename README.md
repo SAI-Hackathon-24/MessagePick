@@ -68,12 +68,14 @@ npm install
 | 场景 | 命令 | 说明 |
 | --- | --- | --- |
 | 开发（服务端） | `npm run dev:server` | `tsx watch src/server/main.ts`，改动自动重启 |
-| 开发（前端） | `npm run dev:web` | `vite`，默认 <http://127.0.0.1:5173>；`/api`、`/media` 代理到服务进程 |
-| 单进程启动 | `npm start` | `tsx src/server/main.ts`（详设决策 9：选端口 → 启服务 → 打开带令牌页面） |
+| 开发（产品前端 `webui/`） | `cd webui && npm run dev` | `vite`，默认 <http://127.0.0.1:5273>；`/api`、`/media` 代理到服务进程（开发用，写操作请走完整流程） |
+| 开发（`src/web/` 旧实现） | `npm run dev:web` | `vite`，默认 <http://127.0.0.1:5173>；不参与构建 |
+| 完整应用 | `npm run build && npm start` | 先构建 `webui/` → `dist/web`，再由服务进程托管并打开**带启动令牌**的页面（同源，读写全功能） |
 
 开发期代理目标默认 `http://127.0.0.1:8787`（见 `vite.config.ts`）。服务进程端口默认由应用数据目录的 `config.json` 的 `server.port` 决定（默认 `0` = 自动选空闲端口，详设 §7）；开发时请把 `server.port` 固定为 `8787`，或用环境变量 `MESSAGEPICK_SERVER_PORT` 覆盖代理目标端口。
 
-> 说明：`src/server/main.ts` 与 `src/web/main.tsx` 已由 `MOD-004` 接线（`src/server/shell/`、`src/web/shell/`）：`npm start` 会选端口 → 启服务 → 打开带令牌页面（详设决策 9），`Ctrl+C` / `SIGTERM` 停止。
+> 说明：`npm start` 会选端口 → 启服务 → 打开带启动令牌的页面（详设决策 9），`Ctrl+C` / `SIGTERM` 停止；
+> 页面即 `webui/` 的构建产物（`dist/web`），与接口同源 —— 启动令牌经 URL fragment 注入，写操作全功能。
 
 ### 快速开始（webui/）
 
@@ -88,12 +90,12 @@ npm run dev        # → http://127.0.0.1:5273
 ## 测试 / 类型检查 / 构建
 
 ```bash
-npm run typecheck   # tsc --noEmit（全仓库类型检查）
+npm run typecheck   # tsc --noEmit（主工程类型检查）
 npm test            # vitest run（覆盖 src/**/*.test.ts）
-npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务端类型检查）
+npm run build       # 构建 webui/ → dist/web + tsc --noEmit（服务端类型检查）
 ```
 
-`webui/` 为独立包，构建与自检命令见 [`webui/README.md`](webui/README.md)。
+`webui/` 为独立包（首次先 `npm --prefix webui install`）；类型检查与开发命令见 [`webui/README.md`](webui/README.md)。
 
 ## 目录结构
 
@@ -102,7 +104,7 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
 ├── package.json / tsconfig.json / vite.config.ts / vitest.config.ts
 ├── README.md                       # 本文件
 ├── docs/                           # 设计文档（不要改；变更走 design-doc-change skill）
-├── webui/                          # 独立包：契约驱动的前端实现（React + TS + Vite + Tailwind）
+├── webui/                          # 独立包：产品前端（按契约实现）；构建产物进 dist/web，由 npm start 托管
 └── src/
     ├── shared/                     # 共享契约类型（全模块只读消费）
     │   ├── errors.ts               #   14 个错误标识 + 统一错误信封
@@ -115,7 +117,7 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
     │   └── main.ts                 #   入口：选端口 → 启服务 → 打开带令牌页面（MOD-004 已接线）
     │   # ingest/  store/  engine/  shell/  meme/  extract/  social/  regen/
     │   # ↑ 各模块目录（src/server/<模块>/）
-    └── web/                        # 浏览器页面（React + ECharts）
+    └── web/                        # 浏览器页面（React + ECharts；旧实现，dev:web 可单独运行）
         ├── index.html              #   vite 入口
         ├── main.tsx                #   挂载点：接线 src/web/shell/（MOD-004 已接线）
         # shell/  meme/  extract/  social/  regen/
@@ -199,11 +201,11 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
 `webui/` 是**按已定稿契约实现的前端**（`MOD-004` 外壳 + 三个业务模块的视图与交互）。
 
 - 需求、模块、接口、数据模型、验收用例的**唯一事实来源**在 `docs/` 主链；
-  `webui/` 不复制契约正文，只在 `webui/src/types.ts` 中做类型映射，并逐条标注 `API-###`
-- 仓库当前并存两套前端代码：单包内的 `src/web/`（`MOD-004` 外壳与各模块视图，`npm run dev:web` 启动）
-  与独立包 `webui/`（`cd webui && npm run dev` 启动）。`webui/` 尚未接线真实后端，默认运行在开发期
-  数据模式（`src/api/fixtures.ts` + `mock.ts`，严格按数据模型口径产出）；
-  `REQ-019` / `AC-010` 要求不做演示数据版本，故这两个文件在接入真实后端后必须删除
+  `webui/` 不复制契约正文，只在 `webui/src/types.ts` 中做类型映射，并在 `webui/src/api/map.ts` 的适配层逐条对表
+- 已接线真实后端（2026-09-13）：数据一律走本机服务进程 HTTP（`webui/src/api/` 三层：`index` 调用点 / `client` 传输 + 令牌 / `map` 换算）；
+  开发期替身（`fixtures.ts` / `mock.ts`）已按 `REQ-019` / `AC-010` 删除；降级清单见 [`webui/README.md`](webui/README.md)
+- 页面托管：`npm run build` 的产物进 `dist/web`，`npm start` 直接托管（同源 + 启动令牌，写操作全功能）；
+  单包内的 `src/web/` 保留源码（`npm run dev:web` 可单独运行），不再参与构建
 - 怎么跑、怎么自检见 [`webui/README.md`](webui/README.md)
 
 ## 许可与版权

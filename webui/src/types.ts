@@ -65,14 +65,24 @@ export const ERROR_PRESENTATION: Record<ErrorCode, ErrorPresentation> = {
   SOURCE_UNAVAILABLE: { title: '来源不可用', kind: 'retry', action: '重试' },
 };
 
-/** 统一响应信封：失败时 data 为空、error 必填（REQ-016） */
-export interface ApiEnvelope<T> {
-  ok: boolean;
-  data: T | null;
-  error?: ApiError;
-  /** 已缓存内容仍可浏览时，UI 需同时渲染内容与错误提示（REQ-016） */
-  stale?: boolean;
-}
+/**
+ * 统一响应信封：失败时 data 为空、error 必填（REQ-016）。
+ * 判别联合（`ok` 为字面量）便于调用方在 `if (res.ok)` / `if (!res.ok)` 后正确收窄。
+ */
+export type ApiEnvelope<T> =
+  | {
+      ok: true;
+      data: T;
+      error?: never;
+      /** 已缓存内容仍可浏览时，UI 需同时渲染内容与错误提示（REQ-016） */
+      stale?: boolean;
+    }
+  | {
+      ok: false;
+      data: null;
+      error: ApiError;
+      stale?: boolean;
+    };
 
 export interface ApiError {
   code: ErrorCode;
@@ -128,6 +138,8 @@ export interface UpdateStatus {
   hasData: boolean;
   /** 记录更新至 X = 群消息来源的最近成功时间；始终可见（REQ-002） */
   updatedTo: string | null;
+  /** 当前用户：「我」的成员标识（Me）；尚未解析出时为 null（API-002 出参） */
+  meId?: string | null;
   /** 按来源分别记录（API-002、REQ-002） */
   sources: SourceStatus[];
 }

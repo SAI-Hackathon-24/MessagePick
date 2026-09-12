@@ -95,11 +95,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       groupIds,
       timeRange,
       keyword,
-      /* 身份：取自 Me 标识。数据源就绪后由后端下发，此处用约定常量占位。 */
-      meId: status?.hasData ? 'p_陈禹哲' : undefined,
+      /* 身份：取自 API-002 下发的 Me 标识（REQ-006；界面不提供手工设置）。 */
+      meId: status?.meId ?? undefined,
       module,
     }),
-    [groupIds, timeRange, keyword, module, status?.hasData],
+    [groupIds, timeRange, keyword, module, status?.meId],
   );
 
   const setFilter = useCallback((patch: Partial<GlobalFilter>) => {
