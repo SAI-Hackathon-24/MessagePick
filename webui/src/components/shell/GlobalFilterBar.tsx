@@ -101,13 +101,19 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         sawRunning = true;
         for (const op of running) observed.add(op.id);
         setAnalysisDetail([...new Set(running.map((op) => op.scope))].join(' · '));
-        /* 进度摘要：折算「梗·识别 3/14」式段位（无分母的操作不显示）；相同段位去重 */
+        /* 进度摘要：折算「梗·识别 3/14」式段位（无分母的操作不显示）；
+           分项内块级进度（如「本窗 7/10 块」）随服务端只读查询附带，有则展示 */
         const segments = [
           ...new Set(
             running.flatMap((op) => {
               if (op.counts.total === undefined || op.counts.total === 0) return [];
               const short = op.scope.includes('梗') ? '梗' : op.scope.includes('信息') ? '提取' : op.scope;
-              return [`${short}${op.phase === undefined ? '' : `·${op.phase}`} ${op.counts.done}/${op.counts.total}`];
+              const base = `${short}${op.phase === undefined ? '' : `·${op.phase}`} ${op.counts.done}/${op.counts.total}`;
+              const chunk =
+                op.counts.chunkDone === undefined || op.counts.chunkTotal === undefined || op.counts.chunkTotal === 0
+                  ? ''
+                  : ` · 块 ${op.counts.chunkDone}/${op.counts.chunkTotal}`;
+              return [`${base}${chunk}`];
             }),
           ),
         ];

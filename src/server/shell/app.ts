@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 
-import { configureEngine, notifyDataEpoch, setEngineLogger, shutdownEngine } from '@server/engine'
+import { configureEngine, notifyDataEpoch, runningTaskChunks, setEngineLogger, shutdownEngine } from '@server/engine'
 import { createExtractModule, type ExtractModule } from '@server/extract'
 import { createIngestModule, type IngestModule } from '@server/ingest'
 import { createMemeModule, type MemeModule } from '@server/meme'
@@ -134,7 +134,7 @@ export interface ShellOperation {
   kind: 'ingest' | 'deletion' | 'warmup' | 'generation'
   scope: string
   state: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
-  counts: { done: number; total?: number }
+  counts: { done: number; total?: number; chunkDone?: number; chunkTotal?: number }
   /** 进行中的阶段提示（如 识别 / 抽取；提示性旁路，仅分析类操作使用）。 */
   phase?: string
   error?: ErrorEnvelope
@@ -1400,7 +1400,23 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
           const settled = items.filter((item) => item.status === 'succeeded' || item.status === 'failed').length
           const active = items.find((item) => item.status === 'queued' || item.status === 'running') ?? items[items.length - 1]
           if (active === undefined) return
-          tracker.update(memeOp, { phase: active.kind, counts: { done: settled, total: items.length } })
+          /* 块级进度：当前分项对应的引擎任务类型「在跑任务」的块聚合（跨窗），
+             把「最后一个窗单飞」的尾部等待可视化；任务完成后引用才回传，故按类型聚合 */
+          const engineType = active.kind === '识别' ? '识别' : active.kind === '变体' ? '聚类' : '抽取'
+          const chunks =
+            active.status === 'queued' || active.status === 'running'
+              ? runningTaskChunks(engineType)
+              : { tasks: 0, chunkDone: 0, chunkTotal: 0 }
+          tracker.update(memeOp, {
+            phase: active.kind,
+            counts: {
+              done: settled,
+              total: items.length,
+              ...(chunks.tasks === 0 || chunks.chunkTotal === 0
+                ? {}
+                : { chunkDone: chunks.chunkDone, chunkTotal: chunks.chunkTotal }),
+            },
+          })
         }, 3_000)
         const result = await handle.done.finally(() => clearInterval(progressTimer))
         const done = result.items.filter((item) => item.status === 'succeeded').length

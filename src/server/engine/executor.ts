@@ -186,6 +186,23 @@ export class Engine {
     return this.#queue.stats
   }
 
+  /**
+   * 汇总某任务类型「运行中」任务的块级进度（供外壳展示，详设 §4.3）：
+   * 只读、无副作用；任务引用只有在任务完成后才回传给调用方，故按类型聚合。
+   */
+  runningTaskChunks(taskType: TaskType): { tasks: number; chunkDone: number; chunkTotal: number } {
+    let tasks = 0
+    let chunkDone = 0
+    let chunkTotal = 0
+    for (const record of this.#registry.list()) {
+      if (record.state !== 'running' || record.taskType !== taskType) continue
+      tasks += 1
+      chunkTotal += record.chunks.length
+      chunkDone += record.chunks.filter((chunk) => chunk.state === 'succeeded' || chunk.state === 'failed').length
+    }
+    return { tasks, chunkDone, chunkTotal }
+  }
+
   /** 订阅 dataEpoch（详设 §3.3）：递增即清空注册表并让旧引用失效为 `INVALID_INPUT`。 */
   notifyDataEpoch(epoch: number): void {
     if (this.#registry.notifyEpoch(epoch)) {

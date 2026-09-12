@@ -195,7 +195,7 @@ export interface OperationSnapshot {
   kind: 'ingest' | 'deletion' | 'warmup' | 'generation';
   scope: string;
   state: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
-  counts: { done: number; total?: number };
+  counts: { done: number; total?: number; chunkDone?: number; chunkTotal?: number };
   /** 进行中的阶段提示（如 识别 / 抽取；提示性旁路）。 */
   phase?: string;
   error?: { code: string; message: string };
