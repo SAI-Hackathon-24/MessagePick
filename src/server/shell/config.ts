@@ -33,7 +33,7 @@ export interface ShellConfig {
     name: string
     /** 模型凭据；只写不读回（详设 §4.3） */
     apiKey: string
-    /** 模型任务并发上限（1–8） */
+    /** 模型任务并发上限（1–64；云端模型端点并发余量充足，详见 engine/config.ts 校准说明） */
     taskConcurrency: number
   }
   cli: {

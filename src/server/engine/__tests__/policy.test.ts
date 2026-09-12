@@ -76,7 +76,8 @@ describe('MOD-003 自动重试', () => {
 
   it('配置非法值被拒绝（不静默接受）', () => {
     const config = createEngineConfig()
-    expect(() => config.patch({ model: { taskConcurrency: 9 } })).toThrow(RangeError)
+    /* 2026-09-13 校准后合法区间为 1–64：越界（65）与 0 仍拒绝 */
+    expect(() => config.patch({ model: { taskConcurrency: 65 } })).toThrow(RangeError)
     expect(() => config.patch({ model: { taskConcurrency: 0 } })).toThrow(RangeError)
     expect(() => config.patch({ retry: { maxAttempts: -1 } })).toThrow(RangeError)
     expect(() => config.patch({ timeouts: { modelCallMs: 0 } })).toThrow(RangeError)

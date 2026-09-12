@@ -52,6 +52,28 @@ const TASK_TYPE_BY_KIND: Readonly<Record<MemeTaskKind, TaskType>> = {
   精华: '抽取',
 }
 
+/**
+ * 识别窗口并行宽度（引擎队列并发上限由 `model.taskConcurrency` 控制，两者取小生效）。
+ * 背景：识别是逐窗模型调用，串行时真实数据下以十分钟计；云端端点并发余量充足。
+ */
+const MEME_BATCH_CONCURRENCY = 4
+
+/** 有界并发执行（错误已由 `#runItem` 内部收敛到 item，不在此处抛出）。 */
+async function runPooled<T>(items: readonly T[], width: number, run: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0
+  const workerCount = Math.max(1, Math.min(width, items.length))
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = cursor
+      cursor += 1
+      const item = items[index]
+      if (item === undefined) return
+      await run(item)
+    }
+  })
+  await Promise.all(workers)
+}
+
 /** 批次运行期状态（§3.5 状态机 A）。 */
 export type BatchStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
 export type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed'
@@ -224,7 +246,15 @@ export class AnalysisOrchestrator {
     try {
       const items = await this.#plan(scope)
       runtime.taskItems.push(...items)
-      for (const item of runtime.taskItems) {
+      /*
+       * 识别窗口并行（各自窗口消息互斥）、变体/精华保持串行（依赖识别后的完整快照）：
+       * 落库在事件循环内按完成顺序串行，同名去重仍读同一张 existingByName——已存在的梗
+       * 必复用 id；同批新建重名窗口概率极低，可用改判/合并 UI 修正。
+       */
+      const recognition = runtime.taskItems.filter((item) => item.plan.kind === '识别')
+      const rest = runtime.taskItems.filter((item) => item.plan.kind !== '识别')
+      await runPooled(recognition, MEME_BATCH_CONCURRENCY, (item) => this.#runItem(item))
+      for (const item of rest) {
         await this.#runItem(item)
       }
       runtime.settle()

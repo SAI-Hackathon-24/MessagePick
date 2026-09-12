@@ -559,7 +559,9 @@ export function personalityRequest(samples: readonly RawMessage[]): Api007Reques
 
 type TaskSuccess = Extract<TaskOutcome, { ok: true }>
 /** 构建阶段的逐人任务并发上限（瓶颈在模型调用；引擎队列另按 taskConcurrency 限流）。 */
-const BUILD_TASK_CONCURRENCY = 4
+/* 逐人抽取任务的有界并发：与引擎队列（settings `model.taskConcurrency`）取小生效；
+   云端模型端点并发余量充足（2026-09-13 校准：单个实测 100 任务可 16 路并行） */
+const BUILD_TASK_CONCURRENCY = 16
 
 /** 有界并发执行并按原顺序收集结果（合并阶段仍按人员顺序串行，保证可重入一致）。 */
 async function inPool<T, R>(items: readonly T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
