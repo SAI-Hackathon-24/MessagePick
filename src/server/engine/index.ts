@@ -20,7 +20,7 @@
  *   `engineEvents.subscribe(...)` 转发 SSE，`notifyDataEpoch(...)` 在数据 epoch 递增时清空注册表。
  */
 
-import type { Api007Request, TaskOutcome, TaskRef } from '@shared'
+import type { Api007Request, TaskOutcome, TaskRef, TaskType } from '@shared'
 
 import { configureEngine, createEngineConfig, engineConfig, type EngineConfig, type EngineConfigPatch } from './config'
 import { createEngine, Engine, type EngineOptions } from './executor'
@@ -63,6 +63,11 @@ export function retryTask(ref: TaskRef): Promise<TaskOutcome> {
 /** 只读计数：队列长度与进行中数量（供外壳展示，§4.3）。 */
 export function engineCounters(): EngineCounters {
   return engine.getCounters()
+}
+
+/** 汇总某任务类型运行中任务的块级进度（供外壳展示；只读，§4.3）。 */
+export function runningTaskChunks(taskType: TaskType): { tasks: number; chunkDone: number; chunkTotal: number } {
+  return engine.runningTaskChunks(taskType)
 }
 
 /** dataEpoch 递增（更新完成 / 删除完成 / 改判落库 / 迁移完成）→ 清空注册表，旧引用失效（§5.3）。 */

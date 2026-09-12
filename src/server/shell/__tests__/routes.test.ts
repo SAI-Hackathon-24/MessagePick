@@ -26,10 +26,17 @@ import { createShellApp, type ShellApp } from '../app'
 /** 请求观察口：断言「路由把入参正确传给了端口」。 */
 const seen: Record<string, unknown> = {}
 
+/** 采集结果（用例可改；缺省「无来源成功」→ 不触发预热）。 */
+let ingestOutcome: unknown = { ok: true, data: { sources: [] }, report: { sources: [] } }
+
 const fakeIngest = {
   status: () => ({ hasData: false, updatedUntilX: null, sourceStatuses: [], meMemberId: null }),
   isRunning: () => false,
   progress: { subscribe: () => () => undefined },
+  trigger: (request: unknown) => {
+    seen['update'] = request
+    return Promise.resolve(ingestOutcome)
+  },
 } as unknown as IngestModule
 
 const fakeExtract = {
@@ -57,6 +64,25 @@ const fakeExtract = {
     seen['todo'] = input
     return { todoStatus: '完成' }
   },
+  run: async () => {
+    seen['extractRun'] = true
+    return {
+      status: 'succeeded',
+      counts: { groups: 1, messages: 10, recognized: 10, extracted: 8, written: 8, failedTasks: 0 },
+      failures: [],
+      window: null,
+    }
+  },
+  retry: async (scope: unknown) => {
+    seen['extractRetry'] = scope
+    seen['extractRetryCalls'] = ((seen['extractRetryCalls'] as number) ?? 0) + 1
+    return {
+      status: 'succeeded',
+      counts: { groups: 1, messages: 5, recognized: 5, extracted: 2, written: 2, failedTasks: 0 },
+      failures: [],
+      window: { from: 0, to: 1 },
+    }
+  },
 } as unknown as ExtractModule
 
 const fakeMeme = {
@@ -79,6 +105,17 @@ const fakeMeme = {
   applyCorrection: async (input: unknown) => {
     seen['correction'] = input
     return { memeId: 'm1' }
+  },
+  startBatch: (cause: string, scope?: unknown) => {
+    seen['memeBatch'] = cause
+    seen['memeBatchScope'] = scope
+    return {
+      batchId: 'batch-1',
+      cause,
+      status: () => 'succeeded',
+      items: () => [],
+      done: Promise.resolve({ status: 'succeeded', items: [] }),
+    }
   },
 } as unknown as MemeModule
 
@@ -192,6 +229,16 @@ const write = (method: WriteMethod, path: string, body?: unknown, options: { tok
 const jsonOf = async (response: Response): Promise<Record<string, unknown>> =>
   (await response.json()) as Record<string, unknown>
 
+/** 轮询等待（预热等 fire-and-forget 流程用；超时即失败）。 */
+const waitFor = async (probe: () => Promise<boolean>, timeoutMs = 2_000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await probe()) return
+    if (Date.now() > deadline) throw new Error('waitFor 超时')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 用例
 // ---------------------------------------------------------------------------
@@ -250,6 +297,37 @@ describe('读路由（直通与筛选 / 分页解析）', () => {
   it('GET /api/people/interest-hints：ids 逗号列表', async () => {
     await get('/api/people/interest-hints', { ids: 'm1,m2' })
     expect(seen['hints']).toEqual({ memberIds: ['m1', 'm2'] })
+  })
+
+  it('展示组装路由：名单取昵称排序、评分卡连接逐人置信度、事件流透传强度', async () => {
+    const zeroDims = { 娱乐: 0, 游戏: 0, 社交: 0, 艺术: 0, 运动: 0 }
+    const zeroPersonality = { 领导式: 0, 活泼: 0, 幽默: 0, 冷静: 0, 理性: 0, 判断: 0 }
+    shell.ports.store.write('DM-011', [
+      { personId: 'p1', memberIds: ['m1'], isMe: false, unknown: false, activity: 2, replyMedianMs: null, dimensionScores: zeroDims, personalityScores: zeroPersonality },
+      { personId: 'p2', memberIds: ['m2'], isMe: true, unknown: false, activity: 5, replyMedianMs: null, dimensionScores: zeroDims, personalityScores: zeroPersonality },
+    ])
+    shell.ports.store.write('DM-013', [
+      { tagId: 't1', name: '羽毛球', dimension: '运动', mergeGroupId: null, firstSeenAt: 1, eventStream: [{ at: 1, strength: 2 }], heatScore: 5 },
+    ])
+    shell.ports.store.write('DM-014', [{ personId: 'p1', tagId: 't1', confidence: 0.8, origin: '模型抽取', evidenceMessageIds: [] }])
+
+    const roster = (await jsonOf(await get('/api/people/roster')))['data'] as { people: { personId: string; name: string; isMe: boolean }[] }
+    expect(roster.people.map((person) => ({ id: person.personId, name: person.name, me: person.isMe }))).toEqual([
+      { id: 'p2', name: '李四', me: true },
+      { id: 'p1', name: '张三', me: false },
+    ])
+
+    const cards = (await jsonOf(await get('/api/interests/score-cards')))['data'] as {
+      cards: { tagId: string; peopleCount: number; perPerson: { personId: string; name: string; confidence: number }[] }[]
+    }
+    expect(cards.cards[0]?.tagId).toBe('t1')
+    expect(cards.cards[0]?.peopleCount).toBe(1)
+    expect(cards.cards[0]?.perPerson[0]).toEqual({ personId: 'p1', name: '张三', confidence: 0.8 })
+
+    const streams = (await jsonOf(await get('/api/interests/event-streams')))['data'] as {
+      streams: { tagId: string; events: { at: number; intensity: number }[] }[]
+    }
+    expect(streams.streams[0]).toEqual({ tagId: 't1', name: '羽毛球', dimension: '运动', firstSeenAt: 1, events: [{ at: 1, intensity: 2 }] })
   })
 
   it('GET /api/pairs：memberAId / memberBId 直通', async () => {
@@ -337,5 +415,89 @@ describe('写路由（令牌守卫与入参校验）', () => {
   it('POST /api/identity/candidates/:id：conclusion 直通', async () => {
     await write('POST', '/api/identity/candidates/c1', { conclusion: '确认' })
     expect(seen['identity']).toEqual({ candidateId: 'c1', conclusion: '确认' })
+  })
+
+  it('GET/PUT /api/settings：模型名可读回；凭据只回「已配置」不回值', async () => {
+    const saved = (await jsonOf(await write('PUT', '/api/settings', { model: { baseUrl: 'http://127.0.0.1:9999/v1', name: 'test-model', apiKey: 'sk-test-secret', taskConcurrency: 2 } })))['data'] as { model: Record<string, unknown> }
+    expect(saved.model).toMatchObject({ baseUrl: 'http://127.0.0.1:9999/v1', name: 'test-model', apiKeyConfigured: true, taskConcurrency: 2 })
+    expect(JSON.stringify(saved)).not.toContain('sk-test-secret')
+
+    const view = (await jsonOf(await get('/api/settings')))['data'] as { model: Record<string, unknown> }
+    expect(view.model['name']).toBe('test-model')
+  })
+
+  it('POST /api/update：选了待分析群 + 群消息采集成功 → 后台触发分析（登记三条操作）', async () => {
+    // 产品口径：导入只入库；选了「待分析群」后才会在更新完成后自动分析（§4.5）
+    await write('PUT', '/api/settings', { ingest: { autoTriggerAfterIngest: true, analysisGroupIds: ['g1'] } })
+    seen['memeBatch'] = undefined
+    seen['extractRun'] = undefined
+    ingestOutcome = {
+      ok: true,
+      data: { sources: [{ source: '群消息', status: 'succeeded' }] },
+      report: { sources: [{ source: '群消息', status: 'succeeded' }] },
+    }
+    const response = await write('POST', '/api/update', {})
+    expect(response.status).toBe(200)
+    await waitFor(async () => {
+      const payload = await jsonOf(await get('/api/operations'))
+      const operations = (payload['data'] as { operations: { kind: string; state: string }[] }).operations
+      const warmups = operations.filter((operation) => operation.kind === 'warmup')
+      return warmups.length === 3 && warmups.every((operation) => operation.state === 'succeeded')
+    })
+    expect(seen['memeBatch']).toBe('ingestDone')
+    // 按群触发 → 提取走逐群重跑（retry 路径），而不是全量 run()
+    expect(seen['extractRetry']).toEqual({ groupId: 'g1', window: { from: 0, to: expect.any(Number) } })
+  })
+
+  it('POST /api/update：仅通讯录成功（群消息未成功）→ 不触发分析', async () => {
+    seen['memeBatch'] = undefined
+    seen['extractRun'] = undefined
+    ingestOutcome = {
+      ok: true,
+      data: { sources: [{ source: '通讯录与好友列表', status: 'succeeded' }] },
+      report: { sources: [{ source: '通讯录与好友列表', status: 'succeeded' }] },
+    }
+    const response = await write('POST', '/api/update', {})
+    expect(response.status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(seen['memeBatch']).toBeUndefined()
+    expect(seen['extractRun']).toBeUndefined()
+  })
+
+  it('POST /api/analyze：指定群 → 梗批次限定该群、提取逐群重跑（全历史窗口）', async () => {
+    seen['memeBatch'] = undefined
+    seen['memeBatchScope'] = undefined
+    seen['extractRetryCalls'] = 0
+    const payload = await jsonOf(await write('POST', '/api/analyze', { groupIds: ['g1', 'g2'] }))
+    expect((payload['data'] as { started: boolean }).started).toBe(true)
+    await waitFor(async () => (seen['extractRetryCalls'] as number) === 2)
+    expect(seen['memeBatch']).toBe('manual')
+    expect(seen['memeBatchScope']).toEqual({ groupIds: ['g1', 'g2'] })
+    expect(seen['extractRetry']).toEqual({ groupId: 'g2', window: { from: 0, to: expect.any(Number) } })
+  })
+
+  it('POST /api/analyze：不传 groupIds → 全部范围（梗不限、提取按水位窗口）', async () => {
+    seen['memeBatch'] = undefined
+    seen['memeBatchScope'] = undefined
+    seen['extractRun'] = undefined
+    const response = await write('POST', '/api/analyze', {})
+    expect(response.status).toBe(200)
+    await waitFor(async () => seen['extractRun'] === true)
+    expect(seen['memeBatch']).toBe('manual')
+    expect(seen['memeBatchScope']).toEqual({})
+  })
+
+  it('POST /api/analyze：缺令牌 → 403（GUARD_STATUS），不触达端口', async () => {
+    seen['memeBatch'] = undefined
+    const response = await write('POST', '/api/analyze', { groupIds: ['g1'] }, { token: null })
+    expect(response.status).toBe(403)
+    expect(seen['memeBatch']).toBeUndefined()
+  })
+
+  it('POST /api/analyze：groupIds 为空数组 / 非法类型 → INVALID_INPUT', async () => {
+    const empty = await jsonOf(await write('POST', '/api/analyze', { groupIds: [] }))
+    expect((empty['error'] as Record<string, unknown>)['code']).toBe('INVALID_INPUT')
+    const bad = await jsonOf(await write('POST', '/api/analyze', { groupIds: 'g1' }))
+    expect((bad['error'] as Record<string, unknown>)['code']).toBe('INVALID_INPUT')
   })
 })

@@ -4,12 +4,28 @@ import { fmtMD } from '@/lib/format';
 import { MESSAGE_KIND_LABEL, type RawMessage } from '@/types';
 import { Avatar, Badge } from '@/components/ui';
 
-export function MessageBubble({ message, showGroup = true }: { message: RawMessage; showGroup?: boolean }) {
+export function MessageBubble({
+  message,
+  showGroup = true,
+  highlight = false,
+  onOpenContext,
+}: {
+  message: RawMessage;
+  showGroup?: boolean;
+  /** 高亮（消息上下文里标记目标消息） */
+  highlight?: boolean;
+  /** 提供时「回原文」按钮可点（打开该消息的上下文） */
+  onOpenContext?: (messageId: string) => void;
+}) {
   const Icon = message.kind === 'image' ? ImageIcon : message.kind === 'sticker' ? Smile : null;
   return (
     <div className="flex gap-3">
       <Avatar name={message.senderName} size={30} className="z-10 shrink-0" />
-      <div className="min-w-0 flex-1 rounded-xl border border-ink-900/[0.06] bg-white/80 px-3 py-2">
+      <div
+        className={`min-w-0 flex-1 rounded-xl border px-3 py-2 ${
+          highlight ? 'border-jade-500/40 bg-jade-500/[0.06] ring-1 ring-jade-500/30' : 'border-ink-900/[0.06] bg-white/80'
+        }`}
+      >
         <div className="mp-meta flex flex-wrap items-center gap-2">
           <span className="font-medium text-ink-600">{message.senderName}</span>
           <span className="tabular-nums">{fmtMD(message.sentAt)}</span>
@@ -18,7 +34,12 @@ export function MessageBubble({ message, showGroup = true }: { message: RawMessa
             {Icon && <Icon size={10} />}
             {MESSAGE_KIND_LABEL[message.kind]}
           </Badge>
-          <button type="button" className="ml-auto inline-flex items-center gap-1 text-[11px] text-jade-700 hover:underline" title="回到该消息所在的上下文">
+          <button
+            type="button"
+            onClick={onOpenContext === undefined ? undefined : () => onOpenContext(message.id)}
+            className="ml-auto inline-flex items-center gap-1 text-[11px] text-jade-700 hover:underline"
+            title="回到该消息所在的上下文"
+          >
             <ExternalLink size={10} /> 回原文
           </button>
         </div>

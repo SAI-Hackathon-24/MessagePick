@@ -13,21 +13,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api } from '@/api';
 import type { GlobalFilter, Group, ModuleKey, UpdateStatus } from '@/types';
 
-/**
- * 身份视角：`global` = 不限（**默认**）；`me` = 只看与「我」相关的数据（REQ-006）。
- *
- * ⚠️ 为什么需要这个开关：`filter.meId` 一旦有值，后端会把**所有**查询按身份过滤
- * （`store/entities/registry.ts` 的 identity 绑定），词云只剩「我相关」的子集 ——
- * 实测同一份数据：全局 209 个梗、`identity=me` 只有 15 个。
- * 因此默认必须是全局，只有使用者主动切到「我」视角才下发。
- */
+/** 身份视角：`global` = 不限（默认）；`me` = 只看与「我」相关的数据（REQ-006）。 */
 export type IdentityMode = 'global' | 'me';
 
 export interface AppState {
   /** 全局筛选条件：三个模块共用同一份 */
   filter: GlobalFilter;
   setFilter: (patch: Partial<GlobalFilter>) => void;
-  /** 身份视角（REQ-006）：`global` 不限 / `me` 只看我相关 */
+  /** 身份视角开关（REQ-006）：「我相关」/ 全局（不限） */
   identityMode: IdentityMode;
   setIdentityMode: (mode: IdentityMode) => void;
   /** 一键清除筛选（空态时使用 —— REQ-016） */
@@ -109,9 +102,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       groupIds,
       timeRange,
       keyword,
-      /* 身份：取自 API-002 下发的 Me 标识（REQ-006；界面不提供手工设置）。 */
-      // 值取自 API-002 的 Me 标识；只有「我」视角才下发，避免隐式过滤成子集
-      meId: identityMode === 'me' ? (status?.meId ?? undefined) : undefined,
+      /* 身份：值为 API-002 下发的 Me 标识（REQ-006；界面不提供手工输入）；视角可选「全局 / 我」。 */
+      meId: identityMode === 'me' ? status?.meId ?? undefined : undefined,
       module,
     }),
     [groupIds, timeRange, keyword, module, identityMode, status?.meId],
@@ -149,7 +141,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (r.status === 'success') return `${label}：成功${r.imported ? `（${r.imported} 条）` : ''}`;
         return `${label}：${r.failureReason ?? '失败'}`;
       });
-      setUpdateNotice(parts.join('；'));
+      // 采集成功后外壳会按设置触发后台分析：如实提示下一步去向（REQ-016）
+      const messagesOk = res.data.results.some((r) => r.source === 'group_messages' && r.status === 'success');
+      const cfgRes = await api.settings();
+      const cfg = cfgRes.ok ? cfgRes.data : null;
+      const auto = cfg?.ingest.autoTriggerAfterIngest ?? true;
+      const modelReady = cfg === null ? true : cfg.model.baseUrl.length > 0 && cfg.model.apiKeyConfigured;
+      let suffix = '';
+      if (messagesOk && auto) {
+        suffix = modelReady
+          ? '。已触发后台分析，稍后刷新即可看到梗 / 提取 / 兴趣结果'
+          : '。已触发后台分析；但模型服务尚未配置（见「设置 → 模型服务」），分析任务会失败';
+      } else if (messagesOk && !auto) {
+        suffix = '。已按设置跳过自动分析（可在筛选条选群后点「分析」按需触发）';
+      }
+      setUpdateNotice(`${parts.join('；')}${suffix}`);
       refreshStatus();
     },
     [refreshStatus],

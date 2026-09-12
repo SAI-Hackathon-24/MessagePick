@@ -6,7 +6,7 @@
  * 附加　：消息涉及成员的**内联兴趣提示**（REQ-070；只含已确认数据，无数据时不显示提示）
  */
 import { ExternalLink, MessageSquareText, Sparkles, Users } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
@@ -14,9 +14,11 @@ import { fmtMD, fmtDayLabel } from '@/lib/format';
 import { EXTRACT_TYPE_LABEL } from '@/types';
 import { Avatar, Badge, Card, CardHeader, Drawer, ErrorState, LoadingState, NoticeBar, SectionHeading } from '@/components/ui';
 import { MessageBubble } from './MessageBubble';
+import { MessageContextDrawer } from './MessageContextDrawer';
 
 export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; open: boolean; onClose: () => void }) {
   const { claimDrawer, releaseDrawer } = useAppState();
+  const [contextId, setContextId] = useState<string | null>(null);
   const detail = useApi(() => (id ? api.messageDetail(id) : Promise.resolve({ ok: true, data: null } as never)), [id]);
   const d = detail.data;
 
@@ -98,7 +100,7 @@ export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; 
             <ol className="space-y-3">
               {d.body.messages.map((m) => (
                 <li key={m.id}>
-                  <MessageBubble message={m} />
+                  <MessageBubble message={m} onOpenContext={setContextId} />
                 </li>
               ))}
             </ol>
@@ -117,6 +119,8 @@ export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; 
           </div>
         </div>
       ) : null}
+      {/* 回跳原文：消息上下文抽屉（REQ-007） */}
+      <MessageContextDrawer id={contextId} open={!!contextId} onClose={() => setContextId(null)} />
     </Drawer>
   );
 }

@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 
-import { configureEngine, notifyDataEpoch, setEngineLogger, shutdownEngine } from '@server/engine'
+import { configureEngine, notifyDataEpoch, runningTaskChunks, setEngineLogger, shutdownEngine } from '@server/engine'
 import { createExtractModule, type ExtractModule } from '@server/extract'
 import { createIngestModule, type IngestModule } from '@server/ingest'
 import { createMemeModule, type MemeModule } from '@server/meme'
@@ -57,6 +57,7 @@ import {
 import type {
   Api001Request,
   DeletionScope,
+  EntityRecord,
   EntityType,
   ErrorEnvelope,
   Id,
@@ -133,7 +134,9 @@ export interface ShellOperation {
   kind: 'ingest' | 'deletion' | 'warmup' | 'generation'
   scope: string
   state: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
-  counts: { done: number; total?: number }
+  counts: { done: number; total?: number; chunkDone?: number; chunkTotal?: number }
+  /** 进行中的阶段提示（如 识别 / 抽取；提示性旁路，仅分析类操作使用）。 */
+  phase?: string
   error?: ErrorEnvelope
   startedAt: number
   updatedAt: number
@@ -363,11 +366,27 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   })
 
   // 端口装配（设计落点 `ports/*`）：只经各模块出口调用，模块之间不互相引用
+  const tracker = createOperationTracker(clock)
+  /** 提取阶段进度目标（groupId → 进行中的提取操作集合；提示性旁路，不参与业务口径）。 */
+  const extractProgressTargets = new Map<string, Set<string>>()
   const ownsStore = options.ports?.store === undefined
   const store = options.ports?.store ?? createStore({ dataDir, clock, logger })
   const ingest =
     options.ports?.ingest ?? createIngestModule({ store, clock, logger, config: ingestConfigOf(config) })
-  const extract = options.ports?.extract ?? createExtractModule({ store, clock, logger })
+  const extract =
+    options.ports?.extract ??
+    createExtractModule({
+      store,
+      clock,
+      logger,
+      onProgress: (info) => {
+        const targets = extractProgressTargets.get(info.groupId)
+        if (targets === undefined) return
+        for (const opId of targets) {
+          tracker.update(opId, { phase: info.stage, counts: { done: info.done, total: info.total } })
+        }
+      },
+    })
   const meme = options.ports?.meme ?? createMemeModule({ store, clock, logger })
   const social = options.ports?.social ?? createSocialPort(store, logger)
   const ports: ShellPorts = {
@@ -388,7 +407,6 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
 
   const boundPort = { value: options.port ?? config.server.port }
   const requestIds = new WeakMap<object, string>()
-  const tracker = createOperationTracker(clock)
 
   const metaOf: MetaOf = (req) => ({
     epoch: currentEpoch(store),
@@ -504,16 +522,46 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
-  /**
-   * API-004（实体类型 = 群）群清单读路径；群标识 + 群名，CHG-026。
-   *
-   * 本次变更：额外给出每个群的**活跃度**（消息数 + 最近消息时间），并**按最近活跃倒序**返回，
-   * 让界面能把最活跃的群排在前面（新产品口径：导入不默认全量分析，由使用者选群；
-   * 默认勾选「最近活跃的前几个」比让使用者从几十个群里翻要合理）。
-   *
-   * 注意：`Group`（DM-002）只有标识与名称，活跃度是从 DM-003 现算的派生值，
-   * 不落库、不改契约字段。
-   */
+  // 按需分析（非契约接口）：对全部或指定群触发梗分析 + 信息提取（后台执行，立即返回）
+  app.post(
+    '/api/analyze',
+    ...writeGuard,
+    handle('analyze', (req, res) => {
+      const scope = 'analyze'
+      const payload = optionalBody(req, scope)
+      const raw = payload['groupIds']
+      let groupIds: string[] | null = null
+      if (raw !== undefined && raw !== null) {
+        if (!Array.isArray(raw)) throw invalidInput('字段 groupIds 需为字符串数组', scope, { field: 'groupIds' })
+        const values = raw
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter((value) => value.length > 0)
+        if (values.length === 0) throw invalidInput('请至少选择一个群（不传 groupIds = 分析全部群）', scope, { field: 'groupIds' })
+        groupIds = [...new Set(values)]
+      }
+      const onlyRaw = payload['only']
+      let only: 'meme' | 'extract' | 'both' = 'both'
+      if (onlyRaw !== undefined && onlyRaw !== null) {
+        if (onlyRaw !== 'meme' && onlyRaw !== 'extract') {
+          throw invalidInput('字段 only 只能是 meme / extract', scope, { field: 'only' })
+        }
+        only = onlyRaw
+      }
+      if (tracker.hasActive('warmup')) {
+        res.status(GATE_STATUS).json(failure(metaOf(req), shellEnvelope('INVALID_INPUT', '已有分析正在进行', scope)))
+        return
+      }
+      void runAnalysis('manual', groupIds, only)
+      res.json(
+        success(metaOf(req), {
+          started: true as const,
+          scope: groupIds === null ? '全部群' : `${groupIds.length} 个群`,
+        }),
+      )
+    }),
+  )
+
+  // API-004（实体类型 = 群）群清单读路径（直通；群标识 + 群名，CHG-026）
   app.get(
     '/api/filter-options/groups',
     handle('filter-options:groups', (req, res) => {
@@ -538,40 +586,6 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
             (left.groupName < right.groupName ? -1 : 1),
         )
       res.json(success(metaOf(req), { ...page, records }))
-    }),
-  )
-
-  /**
-   * 按需触发分析（非契约接口；写令牌守卫）。
-   *
-   * 产品口径：分析要对每个群逐人调用模型（实测上千次、以十分钟计），
-   * 因此**不随采集自动全量开跑**，而是由使用者在界面上选定群后显式触发。
-   * 与 `POST /api/update` 的区别：本接口**不做采集**，只跑分析，
-   * 用于「数据已经采过了，我现在想看这几个群」这一最常见的情形。
-   *
-   * 入参：`{ groupIds?: string[] }` —— 省略或空数组 = 分析全部群。
-   * 语义：立即返回 202，后台执行；进度经 `GET /api/operations` 与 `/api/events` 可见。
-   */
-  app.post(
-    '/api/analyze',
-    ...writeGuard,
-    handle('analyze', (req, res) => {
-      const payload = optionalBody(req, 'analyze')
-      const raw = payload['groupIds']
-      if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
-        throw invalidInput('groupIds 需为字符串数组', 'analyze')
-      }
-      const groupIds: Id[] | null =
-        raw === undefined || raw === null || raw.length === 0
-          ? null
-          : [...new Set(raw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter((v) => v.length > 0))]
-      if (tracker.hasActive('warmup')) {
-        res.status(GATE_STATUS).json(failure(metaOf(req), shellEnvelope('INVALID_INPUT', '已有分析正在进行', 'analyze')))
-        return
-      }
-      // 不 await：分析可能跑很久，接口立即返回；状态经操作快照可见
-      void runWarmup(groupIds, 'manual')
-      res.status(202).json(success(metaOf(req), { started: true, groups: groupIds === null ? '全部' : groupIds.length }))
     }),
   )
 
@@ -616,6 +630,46 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       const entryId = pathParam(req, 'entryId')
       if (entryId.length === 0) throw invalidInput('缺少条目标识', 'message-detail')
       res.json(success(metaOf(req), await assembleDetail(entryId)))
+    }),
+  )
+
+  // 消息上下文（非契约；REQ-007「回跳原文」的落点）：目标消息 + 同群前后各 8 条
+  app.get(
+    '/api/messages/:messageId',
+    handle('messages:context', (req, res) => {
+      const scope = 'messages:context'
+      const messageId = pathParam(req, 'messageId')
+      if (messageId.length === 0) throw invalidInput('缺少消息标识', scope)
+      const payload = messageContextOf(messageId)
+      if (payload === null) {
+        res.status(404).json(failure(metaOf(req), shellEnvelope('NOT_FOUND', '消息不存在', scope)))
+        return
+      }
+      res.json(success(metaOf(req), payload))
+    }),
+  )
+
+  // 消息批量读（非契约；REQ-007 引用的逐条展示字段）：ids 逗号分隔，上限 200
+  app.get(
+    '/api/messages',
+    handle('messages:batch', (req, res) => {
+      const scope = 'messages:batch'
+      const raw = queryFirst(req.query['ids'])
+      if (raw === null || raw.trim().length === 0) throw invalidInput('缺少必填参数 ids', scope, { field: 'ids' })
+      const ids = [
+        ...new Set(
+          raw
+            .split(',')
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+        ),
+      ].slice(0, 200)
+      const byId = new Map(readAll('DM-003').map((message) => [message.messageId, message]))
+      const messages = ids
+        .map((id) => byId.get(id))
+        .filter((message): message is EntityRecord<'DM-003'> => message !== undefined)
+        .map((message) => messageDtoOf(message))
+      res.json(success(metaOf(req), { messages }))
     }),
   )
 
@@ -873,6 +927,44 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
+  // 人的名单（非契约接口；社交页成员列表 / 统计 / 配对的默认值。
+  // 必须注册在 `/api/people/:memberId` 之前，否则会被路径参数路由吞掉。）
+  app.get(
+    '/api/people/roster',
+    handle('people:roster', (req, res) => {
+      const filter = filterOf(req, 'people:roster')
+      social.ensureIndex?.(buildScopeOf(filter))
+      res.json(success(metaOf(req), { people: rosterOf(filter?.groupIds ?? null, filter?.keyword ?? null) }))
+    }),
+  )
+
+  // 人-人关系图谱（非契约接口；REQ-069 展示）
+  app.get(
+    '/api/social/graph',
+    handle('social:graph', (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'social:graph')))
+      res.json(success(metaOf(req), buildRelationGraph()))
+    }),
+  )
+
+  // 兴趣评分卡（非契约接口；REQ-068 / REQ-078 展示）
+  app.get(
+    '/api/interests/score-cards',
+    handle('interests:score-cards', (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'interests:score-cards')))
+      res.json(success(metaOf(req), { cards: buildScoreCards() }))
+    }),
+  )
+
+  // 兴趣事件流（非契约接口；REQ-067 展示）
+  app.get(
+    '/api/interests/event-streams',
+    handle('interests:event-streams', (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'interests:event-streams')))
+      res.json(success(metaOf(req), { streams: buildEventStreams() }))
+    }),
+  )
+
   // API-021 查询兴趣 → 人（直通；entry = 按一级维度 / 按二级标签）
   app.get(
     '/api/people',
@@ -916,6 +1008,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   app.get(
     '/api/me/fit',
     handle('me:fit', async (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'me:fit')))
       res.json(success(metaOf(req), await social.getMyAffinity()))
     }),
   )
@@ -996,6 +1089,196 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
+  // -------------------------------------------------------------------------
+  // 展示组装辅助（非契约接口用；只读存储、不改任何模块输出；
+  // 页面在 MOD-007 自己的视图落盘前的临时数据面 —— 全部为「等值透传 + 连接」）
+  // -------------------------------------------------------------------------
+
+  /** 分页读全量记录（页大小 1000；保险上限 200 页防呆）。 */
+  function readAll<T extends EntityType>(type: T): EntityRecord<T>[] {
+    const all: EntityRecord<T>[] = []
+    for (let page = 1; page <= 200; page += 1) {
+      const result = store.read(type, null, { page, pageSize: 1_000 })
+      all.push(...result.records)
+      if (result.records.length === 0 || all.length >= result.pageInfo.total) break
+    }
+    return all
+  }
+
+  /** 人的名单条目：personId → 展示名（取该人的任一成员昵称）、isMe / unknown / activity。 */
+  interface RosterEntry {
+    personId: Id
+    name: string
+    isMe: boolean
+    unknown: boolean
+    activity: number
+  }
+
+  /** 展示名清洗：去掉控制字符（微信昵称可能带 \u007f 等占位符）。 */
+  const cleanName = (value: string): string => value.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+
+  /** 消息线格式（与 `/api/message-detail` 的来源消息同构；名称由前端按 senderMemberId 解析）。 */
+  function messageDtoOf(message: EntityRecord<'DM-003'>): {
+    messageId: Id
+    groupId: Id
+    senderMemberId: Id
+    sentAt: number
+    kind: string
+    text: string | null
+    mediaRef: string | null
+    mentionedMemberIds: Id[] | null
+    quotedMessageId: Id | null
+  } {
+    return {
+      messageId: message.messageId,
+      groupId: message.groupId,
+      senderMemberId: message.senderMemberId,
+      sentAt: message.sentAt,
+      kind: message.kind,
+      text: message.text,
+      mediaRef: message.mediaRef,
+      mentionedMemberIds: message.mentionedMemberIds,
+      quotedMessageId: message.quotedMessageId,
+    }
+  }
+
+  /** 消息上下文（REQ-007「回跳原文」落点）：目标消息 + 同群前后各 8 条；找不到返回 null。 */
+  function messageContextOf(messageId: string): {
+    groupName: string
+    targetId: Id
+    messages: ReturnType<typeof messageDtoOf>[]
+  } | null {
+    const all = readAll('DM-003')
+    const target = all.find((message) => message.messageId === messageId)
+    if (target === undefined) return null
+    const siblings = all
+      .filter((message) => message.groupId === target.groupId)
+      .sort((a, b) => a.sentAt - b.sentAt || (a.messageId < b.messageId ? -1 : 1))
+    const at = siblings.findIndex((message) => message.messageId === messageId)
+    const window = siblings.slice(Math.max(0, at - 8), at + 9)
+    const group = readAll('DM-002').find((entry) => entry.groupId === target.groupId)
+    return {
+      groupName: group?.groupName ?? target.groupId,
+      targetId: messageId,
+      messages: window.map((message) => messageDtoOf(message)),
+    }
+  }
+
+  function rosterOf(groupIds?: readonly string[] | null, keyword?: string | null): RosterEntry[] {
+    const allow = groupIds !== undefined && groupIds !== null && groupIds.length > 0 ? new Set(groupIds) : null
+    const kw = keyword === undefined || keyword === null || keyword.trim().length === 0 ? null : keyword.trim()
+    // 每个人挑一个展示名：优先非空（清洗后），其次优先「我」（受所选群约束）
+    const bestOf = new Map<string, { name: string; score: number }>()
+    for (const member of readAll('DM-004')) {
+      if (allow !== null && !allow.has(member.groupId)) continue
+      const name = cleanName(member.displayName)
+      const score = (name.length > 0 ? 2 : 0) + (member.isMe === true ? 1 : 0)
+      const prev = bestOf.get(member.personId)
+      if (prev === undefined || score > prev.score) bestOf.set(member.personId, { name, score })
+    }
+    return readAll('DM-011')
+      .filter((person) => allow === null || bestOf.has(person.personId))
+      .map((person) => {
+        const best = bestOf.get(person.personId)
+        return {
+          personId: person.personId,
+          name: best !== undefined && best.name.length > 0 ? best.name : person.personId,
+          isMe: person.isMe,
+          unknown: person.unknown,
+          activity: person.activity,
+        }
+      })
+      .filter((entry) => kw === null || entry.name.includes(kw))
+      .sort((a, b) => Number(b.isMe) - Number(a.isMe) || Number(a.unknown) - Number(b.unknown) || a.name.localeCompare(b.name, 'zh'))
+  }
+
+  /** 人-人关系图谱：节点 = 人（全部列出，未知者零连线）；连线 = 共同兴趣标签（REQ-069 展示口径）。 */
+  function buildRelationGraph() {
+    const nodes = rosterOf()
+    const tagNames = new Map(readAll('DM-013').map((tag) => [tag.tagId, tag.name]))
+    const holders = new Map<string, string[]>()
+    for (const link of readAll('DM-014')) {
+      const list = holders.get(link.tagId) ?? []
+      if (list.length < 30) list.push(link.personId)
+      holders.set(link.tagId, list)
+    }
+    const shared = new Map<string, string[]>()
+    let stop = false
+    for (const [tagId, list] of holders) {
+      if (stop) break
+      for (let i = 0; i < list.length; i += 1) {
+        for (let j = i + 1; j < list.length; j += 1) {
+          const key = list[i] < list[j] ? `${list[i]}\u0000${list[j]}` : `${list[j]}\u0000${list[i]}`
+          const tags = shared.get(key) ?? []
+          tags.push(tagId)
+          shared.set(key, tags)
+          if (shared.size > 20_000) {
+            stop = true
+            break
+          }
+        }
+        if (stop) break
+      }
+    }
+    const links = [...shared.entries()]
+      .map(([key, tagIds]) => {
+        const [source, target] = key.split('\u0000')
+        return {
+          source,
+          target,
+          sharedCount: tagIds.length,
+          sharedInterests: tagIds.slice(0, 3).map((tagId) => tagNames.get(tagId) ?? tagId),
+        }
+      })
+      .sort((a, b) => b.sharedCount - a.sharedCount)
+      .slice(0, 3_000)
+    return { nodes, links }
+  }
+
+  /** 兴趣评分卡：标签热度（DM-013）+ 逐人置信度（DM-014），按热度降序取前 60 张。 */
+  function buildScoreCards() {
+    const nameByPerson = new Map(rosterOf().map((person) => [person.personId, person.name]))
+    const holdersByTag = new Map<string, { personId: string; confidence: number }[]>()
+    for (const link of readAll('DM-014')) {
+      const list = holdersByTag.get(link.tagId) ?? []
+      list.push({ personId: link.personId, confidence: link.confidence })
+      holdersByTag.set(link.tagId, list)
+    }
+    return readAll('DM-013')
+      .map((tag) => {
+        const holders = (holdersByTag.get(tag.tagId) ?? []).slice().sort((a, b) => b.confidence - a.confidence)
+        return {
+          tagId: tag.tagId,
+          name: tag.name,
+          dimension: tag.dimension,
+          heat: tag.heatScore,
+          peopleCount: holders.length,
+          perPerson: holders.slice(0, 50).map((holder) => ({
+            personId: holder.personId,
+            name: nameByPerson.get(holder.personId) ?? holder.personId,
+            confidence: holder.confidence,
+          })),
+        }
+      })
+      .sort((a, b) => b.heat - a.heat || b.peopleCount - a.peopleCount)
+      .slice(0, 60)
+  }
+
+  /** 兴趣事件流：标签首现时间 + 事件点（仅可视化，不参与权重 —— REQ-087）。 */
+  function buildEventStreams() {
+    return readAll('DM-013')
+      .filter((tag) => tag.eventStream.length > 0)
+      .sort((a, b) => a.firstSeenAt - b.firstSeenAt)
+      .slice(0, 80)
+      .map((tag) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+        dimension: tag.dimension,
+        firstSeenAt: tag.firstSeenAt,
+        events: tag.eventStream.map((point) => ({ at: point.at, intensity: point.strength })),
+      }))
+  }
+
   // 群成员目录（非契约接口；页面把成员标识映射为昵称 —— 详情发送者 / 兴趣提示 / 梗王 / 身份对齐）
   app.get(
     '/api/members',
@@ -1003,8 +1286,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       const scope = 'members'
       const ids = queryIdList(req, 'ids', scope)
       const wanted = new Set(ids)
-      const result = store.read('DM-004', null, { page: 1, pageSize: 1000 })
-      res.json(success(metaOf(req), { members: result.records.filter((member) => wanted.has(member.memberId)) }))
+      res.json(success(metaOf(req), { members: readAll('DM-004').filter((member) => wanted.has(member.memberId)) }))
     }),
   )
 
@@ -1089,57 +1371,65 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }
   })
 
-  /**
-   * 采集完成后的预热（HLD 决策 9；`mod-004-app-shell.md` §4.5）。
-   *
-   * ⚠️ 此前**完全没有实现**：`runIngest` 只做 `ingest.trigger()` + `notifyDataEpoch()`，
-   * 全仓没有任何地方调用 `meme.startBatch('ingestDone')` 或 `extract.run(window)`，
-   * 配置项 `ingest.autoTriggerAfterIngest` 与 `kind:'warmup'` 都没有消费者。
-   * 后果是「更新数据」成功后 DM-006 / DM-010 永不生成，梗词云 / 梗生命周期 /
-   * 提取条目 / 通知总览 / 待办全部长期 NO_DATA —— 界面看起来「更新了但什么都没有」。
-   *
-   * 调用面（§4.5；全部是各模块已声明的入口，不新增接口）：
-   *   · MOD-005 `startBatch('ingestDone')`  —— 后台生成梗
-   *   · MOD-006 `run(window)`               —— 窗口语义由该模块自己按增量水位推导，
-   *                                            这里只传采集完成时刻
-   *   · MOD-007 无入参接口取数预热（`API-023` / `API-025`）
-   *   · MOD-008 不参与后台预热
-   * 每模块一条 `kind='warmup'` 操作（scope = 模块 ID）；预热失败**不阻塞**
-   * update 响应（后台跑，失败只收敛操作状态）。
-   */
-  /**
-   * 采集完成后的预热（HLD 决策 9；`mod-004-app-shell.md` §4.5）。
-   *
-   * 产品口径：**导入只入库，不默认全量分析**。
-   * 分析（梗识别 / 抽取 / 画像）要为每个群逐人调用模型（实测 22 个群时阶段 3 需
-   * 997 次调用、约 20 分钟），默认全量开跑会让「点一下更新」变成长时间无响应的黑盒。
-   * 因此 `ingest.analysisGroupIds` 为空时**不发起任何分析**；非空时只分析选定的群。
-   *
-   * 调用面（§4.5）：MOD-005 `startBatch('ingestDone', scope)`、MOD-006 `run()`、
-   * MOD-007 无入参取数预热；MOD-008 不参与后台预热。
-   * 每模块一条 `kind='warmup'` 操作；预热失败**不阻塞** update 响应。
-   */
-  async function runWarmup(groupIds: readonly Id[] | null, cause: 'ingestDone' | 'manual' = 'ingestDone'): Promise<void> {
-    if (groupIds !== null && groupIds.length === 0) {
-      logger.info('warmup.skipped', { module: 'MOD-004', reason: '未选择待分析群', scope: 'MOD-005/006/007' })
-      return
-    }
-    /** 传给模块的群范围（`ScopeFilter` = `SharedFilter`）；`null` = 全部群。 */
-    const scope: SharedFilter | null = groupIds === null ? null : { groupIds: [...groupIds] }
-    logger.info('warmup.scope', { module: 'MOD-004', groups: groupIds === null ? '全部' : groupIds.length })
+  /** 提取运行结果（按群逐次重跑后的聚合形态）。 */
+  type ExtractRunResult = Awaited<ReturnType<ExtractModule['run']>>
 
-    // MOD-005：后台批量生成梗（仅选定群）；等待批次结束以便统计成功/失败明细
-    const memeRun = (async () => {
-      const id = tracker.start({ kind: 'warmup', scope: '梗分析' })
-      tracker.update(id, { state: 'running' })
+  /**
+   * 后台分析（采集后自动 / 按需手动）：梗分析批次 + 信息提取。
+   * - `groupIds === null` = 全部范围（梗批次不限；提取按水位窗口增量扫描）
+   * - 指定群 = 批次 scope 限定；提取逐群按全历史窗口重跑该群分片（写入幂等）
+   * 不阻塞调用方响应；缺块判定在模块内，重复触发安全。
+   */
+  async function runAnalysis(
+    cause: 'ingestDone' | 'manual',
+    groupIds: string[] | null,
+    /** `meme` / `extract` 只跑单侧（补算口径）；缺省两侧都跑（§4.5）。 */
+    only: 'meme' | 'extract' | 'both' = 'both',
+  ): Promise<void> {
+    const scopeLabel = groupIds === null ? '全部' : `${groupIds.length} 个群`
+    const memeOp = only === 'extract' ? '' : tracker.start({ kind: 'warmup', scope: '梗分析' })
+    const extractOp = only === 'meme' ? '' : tracker.start({ kind: 'warmup', scope: '信息提取' })
+    const memeRun = only === 'extract' ? Promise.resolve() : (async () => {
       try {
-        const handle = meme.startBatch(cause, scope ?? undefined)
-        const result = await handle.done
+        const handle = meme.startBatch(cause, groupIds === null ? {} : { groupIds })
+        tracker.update(memeOp, { state: 'running' })
+        /* 分项进度（提示性旁路）：分项一次规划、逐项执行；轮询句柄快照折算 done/total */
+        const progressTimer = setInterval(() => {
+          const items = handle.items()
+          if (items.length === 0) return
+          const settled = items.filter((item) => item.status === 'succeeded' || item.status === 'failed').length
+          const active = items.find((item) => item.status === 'queued' || item.status === 'running') ?? items[items.length - 1]
+          if (active === undefined) return
+          /* 块级进度：当前分项对应的引擎任务类型「在跑任务」的块聚合（跨窗），
+             把「最后一个窗单飞」的尾部等待可视化；任务完成后引用才回传，故按类型聚合 */
+          const engineType = active.kind === '识别' ? '识别' : active.kind === '变体' ? '聚类' : '抽取'
+          const chunks =
+            active.status === 'queued' || active.status === 'running'
+              ? runningTaskChunks(engineType)
+              : { tasks: 0, chunkDone: 0, chunkTotal: 0 }
+          tracker.update(memeOp, {
+            phase: active.kind,
+            counts: {
+              done: settled,
+              total: items.length,
+              ...(chunks.tasks === 0 || chunks.chunkTotal === 0
+                ? {}
+                : { chunkDone: chunks.chunkDone, chunkTotal: chunks.chunkTotal }),
+            },
+          })
+        }, 3_000)
+        const result = await handle.done.finally(() => clearInterval(progressTimer))
         const done = result.items.filter((item) => item.status === 'succeeded').length
+        logger.info?.('analysis.meme.result', {
+          scope: scopeLabel,
+          status: result.status,
+          done,
+          total: result.items.length,
+        })
         const failedItems = result.items.filter((item) => item.status === 'failed')
         if (failedItems.length > 0) {
           const first = failedItems[0]
-          logger.warn('warmup.meme.failures', {
+          logger.warn('analysis.meme.failures', {
             count: failedItems.length,
             itemId: first?.itemId,
             code: first?.error?.code,
@@ -1147,79 +1437,58 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
             scope: first?.error?.scope,
           })
         }
-        tracker.update(id, {
+        tracker.update(memeOp, {
           state: result.status === 'succeeded' ? 'succeeded' : result.status === 'failed' && done === 0 ? 'failed' : 'partial',
           counts: { done, total: result.items.length },
           ...(result.error === undefined ? {} : { error: result.error }),
         })
       } catch (error) {
-        tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:meme') })
-        logger.warn('warmup.failed', { module: 'MOD-005', error: error instanceof Error ? error.message : String(error) })
+        tracker.update(memeOp, { state: 'failed', error: envelopeOfUnknown(error, 'analysis:meme') })
       }
     })()
-
-    // MOD-006：抽取一批。**不传窗口** —— 窗口语义由该模块按增量水位推导
-    // （§4.5 原文）；自造 `{from: now, to: now}` 会得到零宽窗口，首次抽取必然扫不到数据。
-    const extractRun = (async () => {
-      const id = tracker.start({ kind: 'warmup', scope: '信息提取' })
-      tracker.update(id, { state: 'running' })
+    const extractRun = only === 'meme' ? Promise.resolve() : (async () => {
       try {
-        /**
-         * 按群分析时**逐群重跑全历史**（`retry({ groupId, window: 全历史 })`）：
-         * 水位窗口是全局的，无法表达「只看这一个群」；而按群重跑能把老群补上。
-         * 不指定群时仍走原水位窗口 `run()`。
-         */
-        const results =
-          groupIds === null
-            ? [await extract.run()]
-            : await Promise.all(
-                groupIds.map((groupId) => extract.retry({ groupId, window: { from: 0, to: clock() } })),
-              )
-        const failures = results.flatMap((result) => result.failures)
-        const done = results.filter((result) => result.status === 'succeeded').length
-        if (failures.length > 0) {
-          const first = failures[0]
-          logger.warn('warmup.extract.failures', {
-            count: failures.length,
+        tracker.update(extractOp, { state: 'running' })
+        const result = groupIds === null ? await extract.run() : await runExtractForGroups(groupIds, extractOp)
+        logger.info?.('analysis.extract.result', {
+          scope: scopeLabel,
+          status: result.status,
+          counts: result.counts,
+          failures: result.failures.length,
+        })
+        tracker.update(extractOp, {
+          state: result.status,
+          counts: { done: result.counts.written, total: result.counts.extracted },
+          ...(result.status !== 'succeeded' && result.failures.length > 0
+            ? { error: envelopeOfUnknown(new Error(`信息提取有 ${result.failures.length} 个失败分片`), 'analysis:extract') }
+            : {}),
+        })
+        if (result.failures.length > 0) {
+          const first = result.failures[0]
+          logger.warn('analysis.extract.failures', {
+            count: result.failures.length,
             group: first?.group,
             code: first?.code,
             reason: first?.reason,
           })
         }
-        tracker.update(id, {
-          state: failures.length === 0 ? 'succeeded' : done > 0 ? 'partial' : 'failed',
-          counts: { done, total: results.length },
-        })
       } catch (error) {
-        tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:extract') })
-        logger.warn('warmup.failed', { module: 'MOD-006', error: error instanceof Error ? error.message : String(error) })
+        tracker.update(extractOp, { state: 'failed', error: envelopeOfUnknown(error, 'analysis:extract') })
       }
     })()
-
     /**
      * MOD-007：无入参取数预热（触发该模块的懒构建与缓存）。
      *
      * ⚠️ 需要重试：该模块的索引快照在**构建阶段 8 才物化**，而预热与构建几乎同时发起
      * （实测构建开始 573 ms 后就调用 `API-023`）→ 快照未建立、`me()` 为空 →
      * `IDENTITY_NOT_READY`。这不是真失败。只对该错误码重试，其余立即收敛。
-     * 注意构建本身可能耗时数分钟（逐人模型调用），因此退避窗口要足够长。
+     * 注意构建本身可能耗时数分钟（逐人模型调用），因此退避窗口要足够长（时间预算轮询）。
      */
-    const socialRun = (async () => {
+    const socialRun = only === 'both' ? (async () => {
       const id = tracker.start({ kind: 'warmup', scope: '社交画像' })
       tracker.update(id, { state: 'running' })
-      /**
-       * 等待社交索引就绪。
-       *
-       * ⚠️ 该模块的索引快照在**构建阶段 8** 才物化，而构建是**逐人模型调用**
-       * （实测 997 次、数分钟）。此前用「固定次数退避重试」（合计约 18 秒），
-       * 必然在构建完成前耗尽 → 预热恒记为失败。
-       *
-       * 改为**时间预算 + 固定间隔轮询**（默认 5 分钟）：
-       *   · 只有 `IDENTITY_NOT_READY` 才继续等（它在构建完成前是正常中间态）；
-       *   · 其它错误立即失败，不掩盖真实问题；
-       *   · 超预算或构建真的失败 → 记 failed，日志给出原因，不静默。
-       * 预算内成功即成 succeeded，与构建耗时解耦。
-       */
+      /* 按群分析时先声明范围：社交索引按群增量构建（全量不自动触发） */
+      if (groupIds !== null && groupIds.length > 0) social.ensureIndex?.({ groupIds: [...groupIds] })
       const budgetMs = 5 * 60_000
       const intervalMs = 3_000
       const deadline = Date.now() + budgetMs
@@ -1247,9 +1516,54 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
           error: error instanceof Error ? error.message : String(error),
         })
       }
-    })()
-
+    })() : Promise.resolve()
     await Promise.all([memeRun, extractRun, socialRun])
+  }
+
+  /** 逐群提取（按群分析）：每群按全历史窗口重跑该群分片，聚合计数与失败；`opId` 供阶段进度归属。 */
+  async function runExtractForGroups(groupIds: readonly string[], opId: string): Promise<ExtractRunResult> {
+    /* 进度目标登记（提示性旁路）：模块按 groupId 汇报阶段进度，结算后注销 */
+    for (const groupId of groupIds) {
+      const targets = extractProgressTargets.get(groupId) ?? new Set<string>()
+      targets.add(opId)
+      extractProgressTargets.set(groupId, targets)
+    }
+    try {
+      const upper = clock()
+      const window = { from: 0, to: upper }
+      const failures: ExtractRunResult['failures'][number][] = []
+      let last: ExtractRunResult | null = null
+      let messages = 0
+      let recognized = 0
+      let written = 0
+      let extracted = 0
+      let failedTasks = 0
+      for (const groupId of groupIds) {
+        const result = await extract.retry({ groupId, window })
+        last = result
+        /* counts 在替身 / 降级端口上可能缺省：一律按 0 计，不因可选字段缺省而中断整轮 */
+        messages += result.counts?.messages ?? 0
+        recognized += result.counts?.recognized ?? 0
+        written += result.counts?.written ?? 0
+        extracted += result.counts?.extracted ?? 0
+        failedTasks += result.counts?.failedTasks ?? 0
+        failures.push(...result.failures)
+      }
+      const status: ExtractRunResult['status'] = failedTasks === 0 ? 'succeeded' : written > 0 || extracted > 0 ? 'partial' : 'failed'
+      return {
+        status,
+        counts: { groups: groupIds.length, messages, recognized, extracted, written, failedTasks },
+        failures,
+        window: last?.window ?? window,
+      }
+    } finally {
+      for (const groupId of groupIds) {
+        const targets = extractProgressTargets.get(groupId)
+        if (targets === undefined) continue
+        targets.delete(opId)
+        if (targets.size === 0) extractProgressTargets.delete(groupId)
+      }
+    }
   }
 
   async function runIngest(req: Request, res: Response, request: Api001Request): Promise<void> {
@@ -1275,13 +1589,27 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         // 采集会推进 dataEpoch：同步引擎注册表（详设 §3.3 / 引擎 §5.3）
         notifyDataEpoch(currentEpoch(store))
         if (outcome.ok) {
-          // 预热（§4.5）：后台发起，不阻塞本次响应；失败只收敛 warmup 操作状态
-          runWarmup(config.ingest.analysisGroupIds, 'ingestDone')
-        }
-        if (outcome.ok) {
           res.json(success(metaOf(req), outcome.data))
         } else {
           respondFailure(req, res, outcome.error, 'update')
+        }
+        // 后台分析（§4.5）：导入只入库、不默认分析 —— 仅「选了待分析群 + 群消息采集成功 + 开关开启」时触发；
+        // 后台发起、不阻塞本次响应，失败只收敛 warmup 操作状态
+        if (outcome.ok) {
+          const analysisGroupIds = config.ingest.analysisGroupIds
+          if (
+            config.ingest.autoTriggerAfterIngest &&
+            analysisGroupIds.length > 0 &&
+            outcome.report.sources.some((source) => source.source === '群消息' && source.status === 'succeeded')
+          ) {
+            void runAnalysis('ingestDone', [...analysisGroupIds])
+          } else {
+            logger.info('warmup.skipped', {
+              module: 'MOD-004',
+              reason: analysisGroupIds.length === 0 ? '未选择待分析群' : '本次采集无群消息更新或自动分析已关闭',
+              scope: 'MOD-005/006/007',
+            })
+          }
         }
       } catch (error) {
         tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'update') })
@@ -1464,6 +1792,12 @@ export function openPage(url: string): boolean {
 // ---------------------------------------------------------------------------
 // 组装辅助（保持路由处理器只做「取值 → 调端口 → 出信封」）
 // ---------------------------------------------------------------------------
+
+/** 构建范围：筛选条选了群 → 群级增量构建；未选群 → 全量。 */
+function buildScopeOf(filter: SharedFilter | null): { groupIds: readonly string[] | null } {
+  const groups = filter?.groupIds
+  return { groupIds: groups === undefined || groups === null || groups.length === 0 ? null : [...groups] }
+}
 
 /** 端口装配：MOD-007 的进程内索引 / 构建流水线 / 查询层共用同一实例（mod-007 §3.1）。 */
 function createSocialPort(store: Store, logger: ShellLogger): SocialProfileApi {
@@ -1680,7 +2014,7 @@ function materialItemsOf(record: Record<string, unknown>): MaterialItem[] {
   })
 }
 
-/** 设置补丁结构校验 + 边界（详设 §7：并发 1–8；凭据值可为空串 = 清除）。 */
+/** 设置补丁结构校验 + 边界（详设 §7；并发 1–64——2026-09-13 校准：云端端点并发余量充足；凭据值可为空串 = 清除）。 */
 function settingsPatchOf(req: Request): SettingsPatch {
   const scope = 'settings'
   const record = optionalBody(req, scope)
@@ -1691,12 +2025,12 @@ function settingsPatchOf(req: Request): SettingsPatch {
     const model = bodyRecord(modelRaw, `${scope}.model`)
     const next: NonNullable<SettingsPatch['model']> = {}
     if (model['baseUrl'] !== undefined) next.baseUrl = bodyString(model, 'baseUrl', scope) ?? ''
-    if (model['apiKey'] !== undefined) next.apiKey = bodyString(model, 'apiKey', scope) ?? ''
     if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
+    if (model['apiKey'] !== undefined) next.apiKey = bodyString(model, 'apiKey', scope) ?? ''
     const concurrency = bodyInt(model, 'taskConcurrency', scope)
     if (concurrency !== null) {
-      if (concurrency < 1 || concurrency > 8) {
-        throw invalidInput('model.taskConcurrency 需在 1–8 之间', scope, { field: 'taskConcurrency', min: 1, max: 8 })
+      if (concurrency < 1 || concurrency > 64) {
+        throw invalidInput('model.taskConcurrency 需在 1–64 之间', scope, { field: 'taskConcurrency', min: 1, max: 64 })
       }
       next.taskConcurrency = concurrency
     }
@@ -1736,6 +2070,7 @@ function settingsPatchOf(req: Request): SettingsPatch {
 /** 补丁并入配置（只改补丁给出的键；`server.port` 不在补丁面内 = 下次启动生效）。 */
 function applySettings(config: ShellConfig, patch: SettingsPatch): void {
   if (patch.model?.baseUrl !== undefined) config.model.baseUrl = patch.model.baseUrl
+  if (patch.model?.name !== undefined) config.model.name = patch.model.name
   if (patch.model?.apiKey !== undefined) config.model.apiKey = patch.model.apiKey
   if (patch.model?.name !== undefined) config.model.name = patch.model.name
   if (patch.model?.taskConcurrency !== undefined) config.model.taskConcurrency = patch.model.taskConcurrency

@@ -52,6 +52,28 @@ const TASK_TYPE_BY_KIND: Readonly<Record<MemeTaskKind, TaskType>> = {
   精华: '抽取',
 }
 
+/**
+ * 识别窗口并行宽度（引擎队列并发上限由 `model.taskConcurrency` 控制，两者取小生效）。
+ * 背景：识别是逐窗模型调用，串行时真实数据下以十分钟计；云端端点并发余量充足。
+ */
+const MEME_BATCH_CONCURRENCY = 8
+
+/** 有界并发执行（错误已由 `#runItem` 内部收敛到 item，不在此处抛出）。 */
+async function runPooled<T>(items: readonly T[], width: number, run: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0
+  const workerCount = Math.max(1, Math.min(width, items.length))
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = cursor
+      cursor += 1
+      const item = items[index]
+      if (item === undefined) return
+      await run(item)
+    }
+  })
+  await Promise.all(workers)
+}
+
 /** 批次运行期状态（§3.5 状态机 A）。 */
 export type BatchStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
 export type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed'
@@ -224,7 +246,15 @@ export class AnalysisOrchestrator {
     try {
       const items = await this.#plan(scope)
       runtime.taskItems.push(...items)
-      for (const item of runtime.taskItems) {
+      /*
+       * 识别窗口并行（各自窗口消息互斥）、变体/精华保持串行（依赖识别后的完整快照）：
+       * 落库在事件循环内按完成顺序串行，同名去重仍读同一张 existingByName——已存在的梗
+       * 必复用 id；同批新建重名窗口概率极低，可用改判/合并 UI 修正。
+       */
+      const recognition = runtime.taskItems.filter((item) => item.plan.kind === '识别')
+      const rest = runtime.taskItems.filter((item) => item.plan.kind !== '识别')
+      await runPooled(recognition, MEME_BATCH_CONCURRENCY, (item) => this.#runItem(item))
+      for (const item of rest) {
         await this.#runItem(item)
       }
       runtime.settle()
@@ -283,24 +313,30 @@ export class AnalysisOrchestrator {
     const textMessages = messages.filter((message) => typeof message.text === 'string' && message.text.trim().length > 0)
     if (textMessages.length === 0) return []
 
-    // 水位 = 已有出现记录的最大出现时间（无梗时分析窗口内全部消息；不写进度台账，§3.6）
-    let watermark: Timestamp | null = null
+    // 水位按群独立：各群只分析「该群已有出现记录之后」的消息（无梗 / 无记录的群分析全部；
+    // 不写进度台账，§3.6）。旧实现用全局水位 → 多群同跑时后选群的整段历史会被跳过。
+    const watermarkByGroup = new Map<Id, Timestamp>()
     for (const occurrence of occurrences) {
-      watermark = watermark === null ? occurrence.occurredAt : Math.max(watermark, occurrence.occurredAt)
+      const groupId = messagesById.get(occurrence.sourceMessageId)?.groupId
+      if (groupId === undefined) continue
+      const previous = watermarkByGroup.get(groupId)
+      if (previous === undefined || occurrence.occurredAt > previous) watermarkByGroup.set(groupId, occurrence.occurredAt)
     }
-    const pending =
-      memes.length === 0 ? textMessages : textMessages.filter((message) => watermark !== null && message.sentAt > watermark)
-    if (pending.length === 0) return []
+    const groupsWithMemes = new Set<Id>()
+    for (const meme of memes) groupsWithMemes.add(meme.groupId)
 
     const existingByName = new Map<string, Meme>()
     for (const meme of memes) existingByName.set(memeKey(meme.groupId, meme.name), meme)
 
     const byGroup = new Map<Id, RawMessage[]>()
-    for (const message of pending) {
+    for (const message of textMessages) {
+      const watermark = watermarkByGroup.get(message.groupId)
+      if (groupsWithMemes.has(message.groupId) && watermark !== undefined && message.sentAt <= watermark) continue
       const bucket = byGroup.get(message.groupId)
       if (bucket === undefined) byGroup.set(message.groupId, [message])
       else bucket.push(message)
     }
+    if (byGroup.size === 0) return []
 
     const items: TaskItem[] = []
     for (const [groupId, groupMessages] of byGroup) {

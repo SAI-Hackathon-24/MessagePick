@@ -10,12 +10,14 @@ import { Network, Sparkles, TrendingUp } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { fmtMD } from '@/lib/format';
-import { INTEREST_CATEGORY_LABEL } from '@/types';
+import { INTEREST_CATEGORY_LABEL, type GlobalFilter } from '@/types';
 import { Badge, Card, CardHeader, ErrorState, LoadingState, NoticeBar , BuildingState } from '@/components/ui';
 import { InterestEventTimeline, RelationGraphChart } from '@/components/charts/Charts';
 
-export function RelationGraphPanel() {
-  const graph = useApi(() => api.relationGraph(), []);
+export function RelationGraphPanel({ filter }: { filter: GlobalFilter }) {
+  /* 图谱按「当前选中的群聊」构建：不选群时全量节点上千、连线上万，渲染性能极差
+     （用户实测卡顿；社交页已在外层拦住空选情形并给出提示）。 */
+  const graph = useApi(() => api.relationGraph(filter), [JSON.stringify(filter)]);
   if (graph.loading && !graph.data) return <LoadingState label="正在构建人-人关系图谱…" rows={2} />;
   // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
   if (graph.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;

@@ -60,7 +60,7 @@ import {
   taskRefOf,
   type SocialTaskGateway,
 } from '../build/gateway'
-import type { BuildReport, ProfileBuildPipeline } from '../build/index'
+import type { BuildReport, BuildScope, ProfileBuildPipeline } from '../build/index'
 import { indexMembersById, type SocialIndex } from '../build/index-store'
 import { tagHeatScores } from '../build/stages'
 import {
@@ -141,6 +141,8 @@ export interface SocialProfileApi {
   editInterestTag(request: Api028Request): Promise<Api028Response>
   /** `API-029` 查询成员兴趣提示（仅已确认数据）。 */
   getInterestHints(request: Api029Request): Promise<Api029Response>
+  /** 非契约（外壳用）：按当前筛选预声明构建范围（群级增量；缺省全量）。 */
+  ensureIndex?(scope: BuildScope): void
 }
 
 /** 装配依赖（全部注入；不建连、不读配置文件）。 */
@@ -167,6 +169,8 @@ export class SocialHttpAdapter implements SocialProfileApi {
   readonly #logger: SocialLogger
   /** 进程内契合度缓存（键 = 有序对 + dataEpoch + `SCORING_VERSION`；§5.2 `ScoreIndex`、§5.6 幂等键）。 */
   readonly #pairCache = new Map<string, PairView>()
+  /** 外壳预声明的构建范围（最近一次 `ensureIndex`）；查询触发的 `lazy` / `epoch` 沿用它。 */
+  #requestedScope: BuildScope = { groupIds: null }
 
   constructor(options: SocialApiOptions) {
     this.#store = options.store
@@ -602,11 +606,17 @@ export class SocialHttpAdapter implements SocialProfileApi {
   // 触发与索引
   // -------------------------------------------------------------------------
 
+  /** 外壳按当前筛选预声明构建范围（非契约）：随后的查询触发与补跑沿用它。 */
+  ensureIndex(scope: BuildScope): void {
+    this.#requestedScope = scope
+    this.#kickBuild()
+  }
+
   /**
    * 索引缺失 / 陈旧时的后台构建（§3.4 触发口径；不阻塞本次查询——「先渲染缓存 + 进度 + 重试」）。
    * 返回被触发的构建（供测试与外壳预热取数等待）；无需构建时返回 `null`。
    */
-  ensureFresh(): Promise<BuildReport> | null {
+  ensureFresh(scope: BuildScope = this.#requestedScope): Promise<BuildReport> | null {
     const pipeline = this.#pipeline
     if (pipeline === undefined) return null
     let epoch: number
@@ -615,8 +625,16 @@ export class SocialHttpAdapter implements SocialProfileApi {
     } catch (error) {
       throw storageUnavailable(error, 'social.index.epoch')
     }
-    if (!this.#index.available) return pipeline.run('lazy')
-    if (this.#index.stale || this.#index.epoch !== epoch) return pipeline.run('epoch')
+    const requested = scope.groupIds
+    if (requested === null || requested.length === 0) {
+      // 全量请求不自动触发构建（全量代价极大；构建由「选了群聊」的请求按群增量驱动）。
+      return null
+    }
+    if (!this.#index.available) return pipeline.run('lazy', scope)
+    if (this.#index.stale || this.#index.epoch !== epoch) return pipeline.run('epoch', scope)
+    // 群级增量：所选群尚未构建过 → 只补缺失的群。
+    const missing = this.#index.missingGroups(requested)
+    if (missing.length > 0) return pipeline.run('lazy', { groupIds: missing })
     return null
   }
 
@@ -625,11 +643,11 @@ export class SocialHttpAdapter implements SocialProfileApi {
     if (promise !== null) void promise.catch(() => undefined)
   }
 
-  /** 写后失效：标脏索引（保留旧快照供渲染）、清进程内配对缓存、触发 `after-write` 重建。 */
+  /** 写后失效：标脏索引（保留旧快照供渲染）、清进程内配对缓存、按当前范围触发 `after-write` 重建。 */
   #invalidateAfterWrite(): void {
     this.#index.markStale()
     this.#pairCache.clear()
-    const promise = this.#pipeline?.run('after-write')
+    const promise = this.#pipeline?.run('after-write', this.#requestedScope)
     if (promise !== undefined) void promise.catch(() => undefined)
   }
 

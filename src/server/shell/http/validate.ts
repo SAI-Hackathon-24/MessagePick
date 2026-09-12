@@ -301,6 +301,8 @@ export function parseSettingsPatch(body: unknown, scope: string): SettingsPatch 
     }
     const apiKey = bodyString(model, 'apiKey', scope)
     if (apiKey !== null) next.apiKey = apiKey
+    const name = bodyString(model, 'name', scope)
+    if (name !== null) next.name = name
     const concurrency = bodyInt(model, 'taskConcurrency', scope)
     if (concurrency !== null) {
       if (concurrency < 1 || concurrency > 8) {

@@ -406,7 +406,10 @@ export interface LifecycleRow {
   silentAt: Timestamp
   /** 活跃天数 = 首现到最近调用时间的自然日跨度 */
   activeDays: number
+  /** 按月强度（当月次数 ÷ 峰值月次数，0–1）：驱动色阶 */
   monthlyStrength: MonthlyCounts
+  /** 按月真实出现次数（与 `monthlyStrength` 同窗口；条带标签 / 悬停展示） */
+  monthlyCounts: MonthlyCounts
 }
 
 /** 当月领跑梗标注。 */
@@ -501,6 +504,12 @@ export interface NotificationEntry {
   priority: Priority
   todoStatus: TodoStatus
   sourceMessageIds: Id[]
+  /** 主题（聚类命名 / 用户可改；通知总览条目展示用） */
+  topic: string
+  /** 事项要素（与主题拼出条目主行；未提取到为空） */
+  subjectElement: string | null
+  /** 时间要素（条目展示时间；未提取到为空） */
+  timeElement: Timestamp | null
 }
 
 /** 分组的通知列表：一组（key / 展示标签 + 条目）。 */

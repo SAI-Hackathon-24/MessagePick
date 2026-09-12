@@ -17,6 +17,7 @@ import { createEngineTaskGateway, type SocialTaskGateway } from './gateway'
 import { SocialIndex } from './index-store'
 import {
   createWorkspace,
+  type BuildScope,
   runStage0,
   runStage1,
   runStage2,
@@ -63,11 +64,29 @@ export interface BuildReport {
   stages: StageReport[]
 }
 
-/** 设计声明的构建流水线面（§3.3）。 */
+/** 全量构建范围（所有群）。 */
+export const FULL_BUILD_SCOPE: BuildScope = { groupIds: null }
+
+/** a 是否覆盖 b（全量覆盖一切；同为群集合时包含即覆盖）。 */
+function scopeCovers(a: BuildScope, b: BuildScope): boolean {
+  if (a.groupIds === null) return true
+  if (b.groupIds === null) return false
+  const groups = a.groupIds
+  return b.groupIds.every((groupId) => groups.includes(groupId))
+}
+
+/** 合并两次触发范围：任一方全量则全量，否则取并集。 */
+function mergeScopes(a: BuildScope | null, b: BuildScope): BuildScope {
+  if (a === null) return b
+  if (a.groupIds === null || b.groupIds === null) return FULL_BUILD_SCOPE
+  return { groupIds: [...new Set([...a.groupIds, ...b.groupIds])] }
+}
+
+/** 设计声明的构建流水线面（§3.3）；`scope` = 群级增量范围（缺省全量）。 */
 export interface ProfileBuildPipeline {
   readonly state: BuildState
   /** 幂等、可重入；构建中重复触发合并为一次补跑 */
-  run(reason: BuildReason): Promise<BuildReport>
+  run(reason: BuildReason, scope?: BuildScope): Promise<BuildReport>
 }
 
 /** 流水线装配（依赖全部注入；不建连、不读配置文件）。 */
@@ -114,6 +133,8 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
   #report: BuildReport | null = null
   #running: Promise<BuildReport> | null = null
   #queued: BuildReason | null = null
+  #queuedScope: BuildScope | null = null
+  #currentScope: BuildScope | null = null
   readonly #retries = new Map<string, TaskRef>()
   readonly #store: SocialStorePort
   readonly #gateway: SocialTaskGateway
@@ -146,30 +167,44 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
     return this.#retries
   }
 
-  run(reason: BuildReason): Promise<BuildReport> {
+  run(reason: BuildReason, scope: BuildScope = FULL_BUILD_SCOPE): Promise<BuildReport> {
     if (this.#running !== null) {
-      // 单飞：构建中重复触发合并为一次补跑（决策 7）。
+      // 单飞：构建中重复触发合并为一次补跑（决策 7）；在途构建已覆盖本次范围则不再补跑。
+      if (scopeCovers(this.#currentScope ?? FULL_BUILD_SCOPE, scope)) {
+        this.#logger.debug?.('social.build.subsumed', { module: 'MOD-007', reason })
+        return this.#running
+      }
       this.#queued = reason
+      this.#queuedScope = mergeScopes(this.#queuedScope, scope)
       this.#logger.debug?.('social.build.merged', { module: 'MOD-007', reason })
       return this.#running
     }
     const epoch = this.#store.currentEpoch()
     this.#state = 'building'
-    const running = this.#execute(reason, epoch).then((report) => {
+    this.#currentScope = scope
+    const running = this.#execute(reason, epoch, scope).then((report) => {
       this.#report = report
       this.#state = report.state
       this.#running = null
+      this.#currentScope = null
       const queued = this.#queued
+      const queuedScope = this.#queuedScope
       this.#queued = null
-      return queued === null ? report : this.run(queued)
+      this.#queuedScope = null
+      return queued === null ? report : this.run(queued, queuedScope ?? undefined)
     })
     this.#running = running
     return running
   }
 
-  async #execute(reason: BuildReason, epoch: number): Promise<BuildReport> {
+  async #execute(reason: BuildReason, epoch: number, scope: BuildScope): Promise<BuildReport> {
     const startedAt = this.#clock()
-    this.#logger.info?.('social.build.start', { module: 'MOD-007', reason, epoch })
+    this.#logger.info?.('social.build.start', {
+      module: 'MOD-007',
+      reason,
+      epoch,
+      groups: scope.groupIds === null ? 'all' : scope.groupIds.length,
+    })
     const workspace = createWorkspace()
     const env: StageEnv = {
       store: this.#store,
@@ -179,6 +214,7 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
       logger: this.#logger,
       retries: this.#retries,
       workspace,
+      scope,
       ...(this.#dayKey === undefined ? {} : { dayKey: this.#dayKey }),
     }
     const stages: StageReport[] = []
@@ -199,6 +235,7 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
           stage: def.stage,
           code: envelope.code,
           scope: envelope.scope,
+          message: envelope.message,
         })
         stages.push({ stage: def.stage, name: def.name, status: 'failed', error: envelope })
         continue
@@ -216,6 +253,7 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
           stage: def.stage,
           code: envelope.code,
           scope: envelope.scope,
+          message: envelope.message,
           taskRef: first.taskRef,
         })
         stages.push({
@@ -231,6 +269,13 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
       satisfied.add(def.stage)
       stages.push({ stage: def.stage, name: def.name, status: 'ok', counts: outcome.counts })
     }
+
+    /* 群级增量覆盖登记：抽取 + 归并 + 打分全部成功才记覆盖；失败则下次请求重跑 */
+    const covered =
+      stages.find((stage) => stage.stage === 3)?.status === 'ok' &&
+      stages.find((stage) => stage.stage === 4)?.status === 'ok' &&
+      stages.find((stage) => stage.stage === 5)?.status === 'ok'
+    if (covered) this.index.markCoverage(scope.groupIds)
 
     const failed = stages.filter((stage) => stage.status === 'failed').length
     const passed = stages.filter((stage) => stage.status === 'ok').length
@@ -261,3 +306,4 @@ export type { SocialIndexSnapshot } from './index-store'
 export { createEngineTaskGateway, taskRefOf } from './gateway'
 export type { SocialTaskGateway } from './gateway'
 export { tagHeatScores } from './stages'
+export type { BuildScope } from './stages'

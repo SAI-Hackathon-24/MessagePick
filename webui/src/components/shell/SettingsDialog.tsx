@@ -5,9 +5,9 @@
  * · 按群删除 / 全量清空：预检 → 二次确认 → 级联删除（REQ-011 / AC-025 ~ AC-029）
  *   —— 缺少二次确认时后端拒绝执行（CONFIRMATION_REQUIRED / AC-027）
  */
-import { useState } from 'react';
-import { AlertTriangle, Info, ShieldCheck, Trash2 } from 'lucide-react';
-import { api } from '@/api';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Cpu, Info, ShieldCheck, Trash2 } from 'lucide-react';
+import { api, type SettingsPatch } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
@@ -25,6 +25,50 @@ export function SettingsDialog() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // 模型服务设置（分析任务依赖；REQ-016：失败可见、不静默）
+  const settings = useApi(() => api.settings(), [settingsOpen]);
+  const [modelBaseUrl, setModelBaseUrl] = useState('');
+  const [modelName, setModelName] = useState('');
+  const [modelApiKey, setModelApiKey] = useState('');
+  const [taskConcurrency, setTaskConcurrency] = useState(4);
+  const [autoTrigger, setAutoTrigger] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const view = settings.data;
+    if (view === null) return;
+    setModelBaseUrl(view.model.baseUrl);
+    setModelName(view.model.name);
+    setTaskConcurrency(view.model.taskConcurrency);
+    setAutoTrigger(view.ingest.autoTriggerAfterIngest);
+  }, [settings.data]);
+
+  const saveModel = async () => {
+    setSaving(true);
+    setSaveMsg(null);
+    setSaveError(null);
+    const patch: SettingsPatch = {
+      model: {
+        baseUrl: modelBaseUrl.trim(),
+        name: modelName.trim(),
+        ...(modelApiKey.trim().length > 0 ? { apiKey: modelApiKey.trim() } : {}),
+        taskConcurrency,
+      },
+      ingest: { autoTriggerAfterIngest: autoTrigger },
+    };
+    const res = await api.saveSettings(patch);
+    setSaving(false);
+    if (!res.ok || !res.data) {
+      setSaveError(`${res.error?.message ?? '保存失败'}${res.error?.hint ? `（${res.error.hint}）` : ''}`);
+      return;
+    }
+    setModelApiKey('');
+    setSaveMsg(`已保存。模型服务：${res.data.model.baseUrl.length > 0 ? res.data.model.baseUrl : '未配置'}｜模型名：${res.data.model.name.length > 0 ? res.data.model.name : '未配置'}；密钥：${res.data.model.apiKeyConfigured ? '已配置' : '未配置'}。`);
+    settings.refetch();
+  };
 
   const runPrecheck = async (next: DeleteScope) => {
     setScope(next);
@@ -81,8 +125,80 @@ export function SettingsDialog() {
                 {s}
               </li>
             ))}
-            <li className="mp-meta">模型服务地址：{flow.data?.modelEndpoint ?? '—'}（可在配置中修改）</li>
+            <li className="mp-meta">模型服务：{flow.data?.modelEndpoint ?? '—'}（在「设置 → 模型服务」中修改）</li>
           </ul>
+        </Card>
+
+        {/* 模型服务（分析任务依赖） */}
+        <Card>
+          <CardHeader title="模型服务" icon={Cpu} subtitle="梗分析 / 信息提取 / 社交画像走模型任务；地址 / 模型名 / 密钥三项缺一不可（未配置时采集仍可用，但自动分析会失败）" />
+          <div className="space-y-3 px-4 py-4">
+            <label className="block space-y-1">
+              <span className="mp-meta">服务地址（OpenAI 兼容）</span>
+              <input
+                data-testid="settings-model-base-url"
+                value={modelBaseUrl}
+                onChange={(e) => setModelBaseUrl(e.target.value)}
+                placeholder="例如 https://api.example.com/v1"
+                className="w-full rounded-xl border border-ink-900/[0.08] bg-white/80 px-3 py-1.5 text-xs text-ink-700 outline-none placeholder:text-ink-300 focus:border-jade-500/50"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="mp-meta">模型名（请求体 `model` 字段，如 gpt-4o-mini / qwen2.5:7b）</span>
+              <input
+                data-testid="settings-model-name"
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+                placeholder="例如 gpt-4o-mini"
+                className="w-full rounded-xl border border-ink-900/[0.08] bg-white/80 px-3 py-1.5 text-xs text-ink-700 outline-none placeholder:text-ink-300 focus:border-jade-500/50"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="mp-meta">API 密钥（{settings.data?.model.apiKeyConfigured ? '已配置，留空保持不变' : '未配置'}；只写不读回）</span>
+              <input
+                data-testid="settings-model-api-key"
+                type="password"
+                value={modelApiKey}
+                onChange={(e) => setModelApiKey(e.target.value)}
+                placeholder={settings.data?.model.apiKeyConfigured ? '••••••••' : 'sk-…'}
+                className="w-full rounded-xl border border-ink-900/[0.08] bg-white/80 px-3 py-1.5 text-xs text-ink-700 outline-none placeholder:text-ink-300 focus:border-jade-500/50"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-ink-600">
+                <span className="mp-meta">分析任务并发</span>
+                <select
+                  value={taskConcurrency}
+                  onChange={(e) => setTaskConcurrency(Number(e.target.value))}
+                  className="rounded-lg border border-ink-900/[0.1] bg-white px-2 py-1 text-xs outline-none focus:border-jade-500/50"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-600">
+                <input
+                  type="checkbox"
+                  data-testid="settings-auto-trigger"
+                  checked={autoTrigger}
+                  onChange={(e) => setAutoTrigger(e.target.checked)}
+                  className="accent-jade-600"
+                />
+                采集完成后自动分析全部群（关闭时：在筛选条选群后点「分析」按需触发）
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button data-testid="settings-model-save" onClick={() => void saveModel()} disabled={saving}>
+                {saving ? '保存中…' : '保存模型设置'}
+              </Button>
+              {saveMsg && <span className="mp-meta text-jade-700">{saveMsg}</span>}
+              {saveError && <span className="mp-meta text-coral-500">{saveError}</span>}
+            </div>
+            {settings.error && <NoticeBar tone="amber">读取设置失败：{settings.error.message}</NoticeBar>}
+          </div>
         </Card>
 
         {/* 删除（REQ-011） */}
@@ -93,11 +209,26 @@ export function SettingsDialog() {
               <Button variant={scope.kind === 'all' ? 'primary' : 'outline'} onClick={() => void runPrecheck({ kind: 'all' })}>
                 全量清空
               </Button>
-              {groups.slice(0, 4).map((g) => (
-                <Button key={g.id} variant={scope.kind === 'group' && scope.groupId === g.id ? 'primary' : 'outline'} onClick={() => void runPrecheck({ kind: 'group', groupId: g.id })}>
-                  {g.name}
-                </Button>
+              <span className="mp-meta">或按群删除（共 {groups.length} 个群，点选后先预检）</span>
+            </div>
+
+            <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-ink-900/[0.06] bg-white/60 p-1.5">
+              {groups.map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  data-testid={`delete-group-${g.id}`}
+                  onClick={() => void runPrecheck({ kind: 'group', groupId: g.id })}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-coral-500/[0.06]',
+                    scope.kind === 'group' && scope.groupId === g.id && 'bg-coral-500/[0.08] ring-1 ring-coral-500/30',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate text-ink-700">{g.name}</span>
+                  <span className="shrink-0 text-[10px] text-ink-300">预检</span>
+                </button>
               ))}
+              {!groups.length && <div className="mp-meta px-2 py-2">尚未采集到群：请先完成一次「更新数据」。</div>}
             </div>
 
             {!precheck && !busy && (

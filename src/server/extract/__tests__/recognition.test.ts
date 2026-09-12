@@ -180,9 +180,24 @@ describe('要素提取（§5.1；缺项留空、不填猜测值）', () => {
     expect(parseTimestamp(1_726_000_000_000)).toBe(1_726_000_000_000)
     expect(parseTimestamp('1726000000000')).toBe(1_726_000_000_000)
     expect(parseTimestamp('2026-09-12T10:00:00Z')).toBe(Date.parse('2026-09-12T10:00:00Z'))
-    expect(parseTimestamp(123.7)).toBe(123)
+    // 区间外的数字不是有效时间（如年份「2026」、旧版测试里的 123）：不猜 → null
+    expect(parseTimestamp(123.7)).toBeNull()
+    expect(parseTimestamp('2026')).toBeNull()
+    expect(parseTimestamp(2026)).toBeNull()
     expect(parseTimestamp('')).toBeNull()
     expect(parseTimestamp('不是时间')).toBeNull()
     expect(parseTimestamp(null)).toBeNull()
+  })
+
+  it('无年份日期按来源消息时间就近补年（修复 Date.parse 的 2001 回退）', () => {
+    const context = new Date(2026, 8, 6, 12, 0).getTime()
+    expect(parseTimestamp('09-24', context)).toBe(new Date(2026, 8, 24).getTime())
+    expect(parseTimestamp('10.15', context)).toBe(new Date(2026, 9, 15).getTime())
+    expect(parseTimestamp('9月24日 18:30', context)).toBe(new Date(2026, 8, 24, 18, 30).getTime())
+    // 跨年方向：1 月消息提到的「12-25」应补到上一年
+    expect(parseTimestamp('12-25', new Date(2026, 0, 5, 12, 0).getTime())).toBe(new Date(2025, 11, 25).getTime())
+    // 非法日期（2 月 30 日）与无上下文时不解析（不猜）
+    expect(parseTimestamp('02-30', context)).toBeNull()
+    expect(parseTimestamp('09-24')).toBeNull()
   })
 })

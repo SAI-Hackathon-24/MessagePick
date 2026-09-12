@@ -19,7 +19,7 @@ export interface ModelConfig {
   apiKey: string
   /** 模型名（决策 8 的 `model.name`；空 = 未配置，见下方 `resolveModelNotConfigured`）。 */
   name: string
-  /** 模型任务并发上限（1–8；详设 §7）。 */
+  /** 模型任务并发上限（1–64；详设 §7；2026-09-13 校准）。 */
   taskConcurrency: number
 }
 
@@ -74,8 +74,10 @@ function merge(base: EngineConfig, patch: EngineConfigPatch): EngineConfig {
 
 function assertValid(config: EngineConfig): EngineConfig {
   const { taskConcurrency } = config.model
-  if (!Number.isInteger(taskConcurrency) || taskConcurrency < 1 || taskConcurrency > 8) {
-    throw new RangeError('model.taskConcurrency 必须是 1–8 的整数（详设 §7）')
+  /* 2026-09-13 校准：云端模型端点（如 DeepSeek）并发余量充足（限制量级 2500），
+     原 1–8 是为本机模型服务留的性能护栏；上限抬到 64，实际值由设置页/配置控制。 */
+  if (!Number.isInteger(taskConcurrency) || taskConcurrency < 1 || taskConcurrency > 64) {
+    throw new RangeError('model.taskConcurrency 必须是 1–64 的整数（详设 §7；2026-09-13 校准）')
   }
   const { modelCallMs } = config.timeouts
   if (!Number.isFinite(modelCallMs) || modelCallMs <= 0) {

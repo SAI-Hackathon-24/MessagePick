@@ -30,6 +30,7 @@ import type {
   InterestTag,
   LifecycleView,
   MemberInterestHint,
+  MessageContext,
   MessageDetail,
   MyCompatibility,
   PairMatch,
@@ -116,6 +117,9 @@ const enMemeKind = (value: string): 'catchphrase' | 'inner' | 'sticker' =>
 /** 界面英文维度 → 契约中文（用于写路径入参）。 */
 export const zhDimension = (value: InterestCategory): string =>
   ({ sports: '运动', art: '艺术', game: '游戏', entertainment: '娱乐', social: '社交' })[value];
+/** 契约中文维度 → 界面英文类别（与 `zhDimension` 互逆）。 */
+export const dimensionOf = (value: string): InterestCategory =>
+  (DIMENSION as Record<string, InterestCategory>)[value] ?? 'sports';
 /** 界面英文性格六维 → 契约中文。 */
 export const zhPersonality = (value: PersonalityTrait): string =>
   ({ leadership: '领导式', lively: '活泼', humorous: '幽默', calm: '冷静', rational: '理性', judgement: '判断' })[value];
@@ -144,6 +148,26 @@ export const tagInfoFor = (tagId: string): { name: string; category: InterestCat
 export const setCorrection = (memeId: string, mark: CorrectionMark): void => {
   correctionOf.set(memeId, mark);
 };
+
+/** 名单 / 图谱 / 评分卡结果写入人物缓存（配对、契合度等联表展示名用）。 */
+export function rememberPeople(
+  entries: readonly { personId: string; name: string; activity?: number; unknown?: boolean }[],
+): void {
+  for (const entry of entries) {
+    const prev = personInfo.get(entry.personId);
+    personInfo.set(entry.personId, {
+      name: entry.name,
+      activity: entry.activity ?? prev?.activity ?? 0,
+      replyMedianMs: prev?.replyMedianMs ?? null,
+      unknown: entry.unknown ?? prev?.unknown ?? false,
+    });
+  }
+}
+
+/** 评分卡 / 事件流结果写入兴趣标签缓存（写路径的标签定位用）。 */
+export function rememberTags(entries: readonly { tagId: string; name: string; category: InterestCategory }[]): void {
+  for (const entry of entries) tagInfo.set(entry.tagId, { name: entry.name, category: entry.category });
+}
 
 /* -------------------------------------------------------------------------- */
 /* 本地改判记录（黑名单）                                                       */
@@ -248,11 +272,64 @@ export const memberNameOf = (memberId: string): string => memberNames.get(member
 export const personNameOf = (personId: string): string => personInfo.get(personId)?.name ?? personId;
 
 // ---------------------------------------------------------------------------
-// 来源引用（REQ-007）：契约只给消息标识；其余展示字段在无逐条读取接口时留空
+// 来源引用（REQ-007）：契约只给消息标识；经非契约 `/api/messages?ids=` 批量解析
+// 时间 / 摘要 / 群名 / 发送者（失败回落为占位，不阻塞渲染）。
 // ---------------------------------------------------------------------------
+interface MessageInfoCacheRow {
+  groupId: string;
+  sentAt: number;
+  senderMemberId: string;
+  text: string | null;
+  mediaRef: string | null;
+}
 
+const messageInfo = new Map<string, MessageInfoCacheRow>();
+
+/** 占位引用（接口不可用 / 消息缺失时的降级；无时间与摘要）。 */
 const refsOf = (messageIds: readonly string[]): SourceRef[] =>
   messageIds.map((messageId) => ({ messageId, groupId: '', groupName: '', senderName: '', sentAt: '', excerpt: '' }));
+
+/** 批量解析消息引用（含时间 / 摘要 / 群名 / 发送者名；结果进程内缓存）。 */
+async function resolveRefs(messageIds: readonly string[]): Promise<SourceRef[]> {
+  const ids = [...new Set(messageIds.filter((id) => id.length > 0))];
+  const missing = ids.filter((id) => !messageInfo.has(id));
+  if (missing.length > 0) {
+    const result = await request<{
+      messages: Array<{
+        messageId: string;
+        groupId: string;
+        senderMemberId: string;
+        sentAt: number;
+        text: string | null;
+        mediaRef: string | null;
+      }>;
+    }>('GET', '/messages', { query: [['ids', missing.join(',')]] }).catch(() => null);
+    if (result !== null && result.ok) {
+      for (const row of result.data.messages) {
+        messageInfo.set(row.messageId, {
+          groupId: row.groupId,
+          sentAt: row.sentAt,
+          senderMemberId: row.senderMemberId,
+          text: row.text,
+          mediaRef: row.mediaRef,
+        });
+      }
+    }
+  }
+  await Promise.all([ensureGroups(), ensureMembers(ids.map((id) => messageInfo.get(id)?.senderMemberId ?? ''))]);
+  return ids.map((id) => {
+    const info = messageInfo.get(id);
+    if (info === undefined) return { messageId: id, groupId: '', groupName: '', senderName: '', sentAt: '', excerpt: '' };
+    return {
+      messageId: id,
+      groupId: info.groupId,
+      groupName: groupNameOf(info.groupId),
+      senderName: memberNameOf(info.senderMemberId),
+      sentAt: iso(info.sentAt),
+      excerpt: info.text ?? '',
+    };
+  });
+}
 
 /** 媒体引用 → 可访问 URL（服务端 `/media/:ref` 按需解密）。 */
 export const mediaUrlOf = (ref: string | null | undefined): string | undefined =>
@@ -310,21 +387,19 @@ export function toUpdateResult(wire: {
 }
 
 /** 群清单 → 筛选条群多选项（并写入展示名缓存）。 */
-export function toGroups(
-  records: Array<{ groupId: string; groupName: string; messageCount?: number; lastMessageAt?: number | null }>,
-): Group[] {
-  for (const row of records) groupNames.set(row.groupId, row.groupName);
-  /*
-   * ⚠️ 必须透传活跃度派生字段：服务端已在群清单里给出 `messageCount` / `lastMessageAt`
-   * 并按最近活跃排序，但这里若只取 id/name，界面上的「待分析群」会**恒显示 0 条消息**
-   * （`Group` 类型声明了这两个字段，缺了就会被当成 undefined → 显示 0）。
-   */
-  return records.map((row) => ({
-    id: row.groupId,
-    name: row.groupName,
-    messageCount: row.messageCount ?? 0,
-    lastMessageAt: row.lastMessageAt ?? null,
-  }));
+/** 群展示名：源头未给名字（groupName 就是群 ID）时给出明确回退，而不是裸 ID。 */
+const groupDisplayName = (groupId: string, groupName: string): string => {
+  const cleaned = groupName.trim();
+  if (cleaned.length > 0 && cleaned !== groupId) return cleaned;
+  const short = groupId.split('@')[0] ?? groupId;
+  return `未命名群聊（${short}）`;
+};
+
+export function toGroups(records: Array<{ groupId: string; groupName: string }>): Group[] {
+  for (const row of records) groupNames.set(row.groupId, groupDisplayName(row.groupId, row.groupName));
+  return records
+    .map((row) => ({ id: row.groupId, name: groupDisplayName(row.groupId, row.groupName) }))
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh'));
 }
 
 const ENTITY_LABEL: Record<string, string> = {
@@ -440,7 +515,12 @@ interface WireCell {
 
 export async function toMemeUnit(wire: WireCell): Promise<import('@/types').MemeUnit> {
   const kingIds = wire.memeKing.map((row) => row.memberId);
-  await Promise.all([ensureGroups(), ensureMembers(kingIds)]);
+  const [sourceRefs, highlightRefs] = await Promise.all([
+    resolveRefs(wire.sourceMessageIds),
+    resolveRefs(wire.highlights.map((row) => row.messageId)),
+    ensureGroups(),
+    ensureMembers(kingIds),
+  ]);
   const cached = cloudInfo.get(wire.memeId);
   const groupName = groupNameOf(wire.firstSeenGroupId);
   const monthly = Object.entries(wire.monthlyCounts)
@@ -474,17 +554,24 @@ export async function toMemeUnit(wire: WireCell): Promise<import('@/types').Meme
       activeDays: wire.lifecycle.activeDays,
     },
     king: { members, topUsers: members.slice(0, 3).map(({ memberId, name, count }) => ({ memberId, name, count })) },
-    highlights: wire.highlights.map((row) => ({
-      messageId: row.messageId,
-      senderName: '',
-      sentAt: '',
-      kind: (MESSAGE_KIND as Record<string, 'text' | 'image' | 'sticker'>)[row.kind] ?? 'text',
-      groupId: wire.firstSeenGroupId,
-      groupName,
-    })),
+    highlights: wire.highlights.map((row) => {
+      const ref = highlightRefs.find((candidate) => candidate.messageId === row.messageId);
+      const info = messageInfo.get(row.messageId);
+      const mediaUrl = mediaUrlOf(info?.mediaRef ?? null);
+      return {
+        messageId: row.messageId,
+        senderName: ref?.senderName ?? '',
+        sentAt: ref?.sentAt ?? '',
+        kind: (MESSAGE_KIND as Record<string, 'text' | 'image' | 'sticker'>)[row.kind] ?? 'text',
+        groupId: ref?.groupId ?? wire.firstSeenGroupId,
+        groupName: ref?.groupName ?? groupName,
+        ...(info?.text === null || info?.text === undefined ? {} : { text: info.text }),
+        ...(mediaUrl === undefined ? {} : { mediaUrl }),
+      };
+    }),
     variants: wire.variantMemeIds.map((id) => ({ memeId: id, name: cloudInfo.get(id)?.name ?? id })),
     correction: correctionOf.get(wire.memeId) ?? 'none',
-    sourceRefs: refsOf(wire.sourceMessageIds),
+    sourceRefs,
     mine: cached?.mine ?? false,
   };
 }
@@ -629,6 +716,10 @@ export async function toNoticeGroups(wire: {
       priority: string;
       todoStatus: string;
       sourceMessageIds: string[];
+      /** 2026-09-13 起随 API-015 补充（旧响应缺失时按空处理） */
+      topic?: string;
+      subjectElement?: string | null;
+      timeElement?: number | null;
     }>;
   }>;
 }): Promise<Array<{ key: string; label: string; items: ExtractItem[] }>> {
@@ -636,21 +727,30 @@ export async function toNoticeGroups(wire: {
   return wire.groups.map((group) => ({
     key: group.key,
     label: group.label,
-    items: group.notifications.map((row) => ({
-      id: row.entryId,
-      type: enRecognition(row.recognitionType),
-      elements: {},
-      subject: '',
-      groupId: row.groupId,
-      groupName: groupNameOf(row.groupId),
-      sentAt: '',
-      summaryLine: '',
-      aiSummary: '',
-      priority: (PRIORITY as Record<string, 'high' | 'medium' | 'low'>)[row.priority] ?? 'medium',
-      todoState: (TODO_STATE as Record<string, 'pending' | 'done' | 'ignored'>)[row.todoStatus] ?? 'pending',
-      remindState: 'no_remind',
-      sourceRefs: refsOf(row.sourceMessageIds),
-    })),
+    items: group.notifications.map((row) => {
+      const topic = row.topic ?? '';
+      const subjectElement = row.subjectElement ?? null;
+      const timeElement = row.timeElement ?? null;
+      return {
+        id: row.entryId,
+        type: enRecognition(row.recognitionType),
+        elements: {
+          ...(timeElement === null ? {} : { time: iso(timeElement) }),
+          ...(subjectElement === null || subjectElement === '' ? {} : { subject: subjectElement }),
+        },
+        subject: topic,
+        groupId: row.groupId,
+        groupName: groupNameOf(row.groupId),
+        sentAt: iso(timeElement),
+        /* 主行与时间轴卡片同口径：「主题 · 事项要素」；早前置空导致面板条目一片空白 */
+        summaryLine: [topic, subjectElement].filter((v) => v !== null && v !== '').join(' · '),
+        aiSummary: '',
+        priority: (PRIORITY as Record<string, 'high' | 'medium' | 'low'>)[row.priority] ?? 'medium',
+        todoState: (TODO_STATE as Record<string, 'pending' | 'done' | 'ignored'>)[row.todoStatus] ?? 'pending',
+        remindState: 'no_remind',
+        sourceRefs: refsOf(row.sourceMessageIds),
+      };
+    }),
   }));
 }
 
@@ -710,6 +810,41 @@ export async function toMessageDetail(
         ...(message.quotedMessageId === null ? {} : { quotedMessageId: message.quotedMessageId }),
       })),
     },
+  };
+}
+
+/** 消息上下文（非契约 /api/messages/:id）：目标消息 + 同群相邻消息。 */
+export async function toMessageContext(wire: {
+  groupName: string;
+  targetId: string;
+  messages: Array<{
+    messageId: string;
+    groupId: string;
+    senderMemberId: string;
+    sentAt: number;
+    kind: string;
+    text: string | null;
+    mediaRef: string | null;
+    mentionedMemberIds: string[] | null;
+    quotedMessageId: string | null;
+  }>;
+}): Promise<MessageContext> {
+  await ensureMembers(wire.messages.map((message) => message.senderMemberId));
+  return {
+    groupName: wire.groupName,
+    targetId: wire.targetId,
+    messages: wire.messages.map((message) => ({
+      id: message.messageId,
+      groupId: message.groupId,
+      senderId: message.senderMemberId,
+      senderName: memberNameOf(message.senderMemberId),
+      sentAt: iso(message.sentAt),
+      kind: (MESSAGE_KIND as Record<string, 'text' | 'image' | 'sticker'>)[message.kind] ?? 'text',
+      ...(message.text === null ? {} : { text: message.text }),
+      ...(mediaUrlOf(message.mediaRef) === undefined ? {} : { mediaUrl: mediaUrlOf(message.mediaRef) }),
+      ...(message.mentionedMemberIds === null ? {} : { mentionedIds: message.mentionedMemberIds }),
+      ...(message.quotedMessageId === null ? {} : { quotedMessageId: message.quotedMessageId }),
+    })),
   };
 }
 
@@ -875,22 +1010,30 @@ export function toMyCompatibility(wire: { pairs: Array<{ personId: string; score
   };
 }
 
+const ALIGN_DISPLAY_MEMBERS_MAX = 8;
+
 export async function toAlignmentList(wire: {
   candidates: Array<{ candidateId: string; memberIds: string[]; source: string; status: string }>;
 }): Promise<import('@/types').IdentityAlignmentCandidate[]> {
-  const memberIds = wire.candidates.flatMap((candidate) => candidate.memberIds);
+  /* 只解析展示所需的前 N 位成员：候选可带数百成员（实测全量 6.6 万条成员引用），
+     之前一次全解析 → 数百批 /api/members + 巨长 DOM，浏览器卡死数秒。 */
+  const memberIds = wire.candidates.flatMap((candidate) => candidate.memberIds.slice(0, ALIGN_DISPLAY_MEMBERS_MAX));
   await Promise.all([ensureGroups(), ensureMembers(memberIds)]);
-  return wire.candidates.map((candidate) => ({
-    candidateId: candidate.candidateId,
-    members: candidate.memberIds.map((memberId) => ({
-      memberId,
-      groupName: groupNameOf(memberNames.get(memberId)?.groupId ?? ''),
-      displayName: memberNameOf(memberId),
-    })),
-    // 契约来源为「通讯录 / 好友列表」；界面 `DataSource` 只有「contacts」一档 → 归入之
-    source: 'contacts' as DataSource,
-    status: (IDENTITY_STATUS as Record<string, 'unconfirmed' | 'confirmed' | 'rejected'>)[candidate.status] ?? 'unconfirmed',
-  }));
+  return wire.candidates.map((candidate) => {
+    const shown = candidate.memberIds.slice(0, ALIGN_DISPLAY_MEMBERS_MAX);
+    return {
+      candidateId: candidate.candidateId,
+      members: shown.map((memberId) => ({
+        memberId,
+        groupName: groupNameOf(memberNames.get(memberId)?.groupId ?? ''),
+        displayName: memberNameOf(memberId),
+      })),
+      extraMemberCount: Math.max(0, candidate.memberIds.length - shown.length),
+      // 契约来源为「通讯录 / 好友列表」；界面 `DataSource` 只有「contacts」一档 → 归入之
+      source: 'contacts' as DataSource,
+      status: (IDENTITY_STATUS as Record<string, 'unconfirmed' | 'confirmed' | 'rejected'>)[candidate.status] ?? 'unconfirmed',
+    };
+  });
 }
 
 /** 写路径响应：状态回带（界面 `submitAlignment` 的回参形状）。 */

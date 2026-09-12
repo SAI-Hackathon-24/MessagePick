@@ -30,6 +30,10 @@ export function PersonProfilePanel({ personId }: { personId: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  if (personId.length === 0) {
+    return <EmptyState title="请选择成员" description="从左侧名单中选择一位成员，查看其兴趣画像与性格标签。" />;
+  }
+
   if (profile.loading && !profile.data) return <LoadingState label="正在读取兴趣画像…" rows={3} />;
   // 构建中：IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败
   if (profile.error?.code === 'IDENTITY_NOT_READY') {

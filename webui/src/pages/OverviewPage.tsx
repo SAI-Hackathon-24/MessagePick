@@ -20,7 +20,8 @@ export default function OverviewPage() {
   const cloud = useApi(() => api.memeCloud(filter, 'heat', 'cumulative'), [JSON.stringify(filter)]);
   const extracts = useApi(() => api.extractItems(filter, 1, 10), [JSON.stringify(filter)]);
   const due = useApi(() => api.dueTodos(new Date().toISOString()), []);
-  const mine = useApi(() => api.myCompatibility(), []);
+  // 注：不自动调用社交接口（/me/fit 等）—— 避免打开应用即触发社交全量构建（含模型任务）；
+  // 社交画像改为进入「正向 / 反向社交」页时按需构建。
   const scores = useApi(() => api.interestScoreCards(), []);
 
   const memes = cloud.data?.entries ?? [];
@@ -34,7 +35,7 @@ export default function OverviewPage() {
         <Stat label="已采集消息" value={num(volume.data?.messages ?? 0)} unit="条" hint={`覆盖 ${volume.data?.groups ?? 0} 个群`} icon={MessageSquareText} />
         <Stat label="梗词云条目" value={memes.length} unit="个" hint="模块一：字号 = 出现频率" icon={Sparkles} tone="amber" />
         <Stat label="提取条目" value={num(extracts.data?.total ?? 0)} unit="条" hint="模块二：通知与活动" icon={AlarmClock} tone="coral" />
-        <Stat label="我的整体融入度" value={mine.data?.integration ?? '—'} unit="分" hint="模块三：我 vs 每个群友" icon={HeartHandshake} tone="jade" />
+        <Stat label="我的整体融入度" value="—" unit="分" hint="模块三：进入「正向 / 反向社交」后生成" icon={HeartHandshake} tone="jade" />
       </section>
 
       {/* 到期待办提示：仅在使用应用期间检查（REQ-046） */}
@@ -92,8 +93,8 @@ export default function OverviewPage() {
             title="正向 / 反向社交"
             desc="人 → 兴趣（画像）/ 兴趣 → 人（找搭子）；契合度与逐维度差值"
             metrics={[
-              { k: '候选人', v: `${mine.data?.perPerson.length ?? 0} 人` },
-              { k: '高契合', v: `${(mine.data?.perPerson ?? []).filter((p) => p.score >= 60).length} 人` },
+              { k: '候选人', v: '按需生成' },
+              { k: '高契合', v: '—' },
             ]}
           />
         </div>

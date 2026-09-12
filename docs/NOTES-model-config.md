@@ -28,7 +28,7 @@
 | `model.baseUrl` | OpenAI 兼容端点；代码会请求 `POST {baseUrl}/chat/completions` | 换成对方的地址，例如 `https://api.moonshot.cn/v1` |
 | `model.apiKey` | Bearer 凭据。**只写不读回**：`GET /api/settings` 只返回 `apiKeyConfigured` 布尔 | 换成对方的 Key |
 | `model.name` | 模型名（不带供应商前缀） | 换成对方的模型名，例如 `kimi-k2-0711-preview` |
-| `model.taskConcurrency` | 模型任务并发上限（1–8） | 按额度调整 |
+| `model.taskConcurrency` | 模型任务并发上限（1–64） | 按额度调整 |
 
 任何 **OpenAI 兼容**的服务都能直接用，不需要改代码。
 

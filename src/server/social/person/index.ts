@@ -2,19 +2,16 @@
  * 人的同步与身份合并（mod-007 §3.1「person/」、§5.1 DM-011；`REQ-006`、`REQ-082`、`AC-129`、`AC-130`）。
  *
  * 口径：
- * - 未确认映射时一人 = 一个群成员；**只有状态为「已确认」的候选映射**才把群成员合并到同一个人；
- * - 人的标识取**成员记录上 `personId` 的最小值**（该字段由 MOD-002 的结构绑定维护，
- *   未确认映射时为 `person:<群>:<成员>`）。合并后仍稳定，派生记录按此键幂等写入；
- * - ⚠️ 这里**不再自造** `personId`（曾用「成员标识的最小值」）：那会让「我」归到一个
- *   与 MOD-002 口径不同的新标识上，而 `dm011_person` 有 `is_me = 1` 的**唯一索引**，
- *   于是为「我」写出第二条 `isMe` 记录 → 唯一约束冲突 → 阶段 0 失败、后续阶段全部 skipped
- *   → 索引永不物化 → `API-020` ~ `API-029` 全部 `EMPTY_RESULT`（社交模块整体不可用）。
+ * - 归属（成员 → 人）由存储侧结构维护：默认一人 = 一个群成员；**只有状态为「已确认」的候选映射**
+ *   才把群成员合并到同一个人（反映在 `DM-004.person_id` 上，由存储侧执行）。
+ * - 本模块只做投影：按成员的归属分组得到人集合，不自行推导身份、不自行合并（避免与存储侧
+ *   生成两套人标识）。
  * - 「我」= 含带 Me 标识成员的唯一人（`REQ-006`）；未知标记由活跃度在阶段 2 判定。
  */
 
 import { DIMENSIONS, PERSONALITY_DIMENSIONS, type GroupMember, type IdentityCandidate, type Id, type Person } from '@shared'
 
-/** 同步输入：群成员身份（DM-004）与身份对齐候选（DM-012）。 */
+/** 同步输入：群成员身份（DM-004，含归属解析）与身份对齐候选（DM-012）。 */
 export interface PersonSyncInput {
   members: readonly GroupMember[]
   candidates: readonly IdentityCandidate[]
@@ -28,7 +25,7 @@ export interface PersonSyncResult {
   personByMember: Map<Id, Id>
 }
 
-/** 由群成员身份与已确认映射同步出人集合。 */
+/** 由群成员身份与已确认映射同步出人集合（归属以 `DM-004.person_id` 为准，§5.1）。 */
 export function syncPeople(input: PersonSyncInput): PersonSyncResult {
   const parent = new Map<Id, Id>()
   const find = (memberId: Id): Id => {
@@ -39,9 +36,8 @@ export function syncPeople(input: PersonSyncInput): PersonSyncResult {
     return root
   }
   /**
-   * 并查集合并（按成员标识操作）。
-   * 根只用于**分组**，最终的人标识另按成员记录上的 `personId` 最小值确定（见下），
-   * 因此这里的根取值不影响对外标识。
+   * 并查集合并（按成员标识操作）。根只用于**分组**，最终人标识另按成员记录上的
+   * `personId` 最小值确定（见下），因此这里的根取值不影响对外标识。
    */
   const union = (left: Id, right: Id): void => {
     const rootLeft = find(left)
@@ -54,6 +50,7 @@ export function syncPeople(input: PersonSyncInput): PersonSyncResult {
   for (const member of input.members) {
     if (!parent.has(member.memberId)) parent.set(member.memberId, member.memberId)
   }
+  /* 已确认候选：合并成员（存储侧尚未重指 personId 时的兼容口径） */
   for (const candidate of input.candidates) {
     if (candidate.status !== '已确认') continue
     const [first, ...rest] = candidate.memberIds
@@ -63,6 +60,14 @@ export function syncPeople(input: PersonSyncInput): PersonSyncResult {
       if (!parent.has(first)) parent.set(first, first)
       union(first, memberId)
     }
+  }
+  /* 存储侧重指：同一 personId 的成员天然是同一人（投影口径；兼容确认合并后的库） */
+  const firstMemberOfPerson = new Map<Id, Id>()
+  for (const member of input.members) {
+    const personId = member.personId === '' ? member.memberId : member.personId
+    const first = firstMemberOfPerson.get(personId)
+    if (first === undefined) firstMemberOfPerson.set(personId, member.memberId)
+    else union(first, member.memberId)
   }
 
   const memberByRoot = new Map<Id, GroupMember[]>()
@@ -78,10 +83,12 @@ export function syncPeople(input: PersonSyncInput): PersonSyncResult {
   for (const [root, members] of memberByRoot) {
     const memberIds = members.map((member) => member.memberId).sort()
     /**
-     * 人标识 = 组内成员 `personId` 的最小值（MOD-002 的结构绑定口径）。
-     * 取最小是为了让「已确认合并」的结果与成员顺序无关、可幂等重放。
+     * 人标识 = 组内成员 `personId` 的最小值（MOD-002 的结构绑定口径；空值回落成员标识）。
+     * 取最小是为了让「已确认合并」的结果与成员顺序无关、可幂等重放；不自行造新标识。
      */
-    const personIds = members.map((member) => member.personId).sort()
+    const personIds = members
+      .map((member) => (member.personId === '' ? member.memberId : member.personId))
+      .sort()
     const personId = personIds[0] ?? root
     persons.push({
       personId,

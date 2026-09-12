@@ -9,7 +9,8 @@
  *   · 梗生命周期视图：每梗一行、条带长度 = 生命周期跨度、按月强度、当月领跑梗、表格视图
  *   · 生成：G1 表情包（三档素材 + 模板 + 文案 → 4 张）、G2 文字变体（5 条）、G3 新梗候选（确认后入库）
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Clock, Flame, Grid3x3, RefreshCw, Sparkles, Table2 } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
@@ -37,7 +38,17 @@ type View = 'cloud' | 'lifecycle' | 'table';
 
 export default function MemePage() {
   const { filter, clearFilter } = useAppState();
-  const [view, setView] = useState<View>('cloud');
+  /* 侧边栏子菜单（/meme/cloud|lifecycle|table）驱动视图：曾只改 URL 而页面不响应。
+     内部页签点击同时导航，保证 URL / 侧边栏高亮与页面一致。 */
+  const { view: viewParam } = useParams<{ view: string }>();
+  const navigate = useNavigate();
+  const viewFromParam = (value: string | undefined): View =>
+    value === 'lifecycle' || value === 'table' ? value : 'cloud';
+  const [view, setView] = useState<View>(viewFromParam(viewParam));
+  useEffect(() => {
+    setView(viewFromParam(viewParam));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewParam]);
   const [layout, setLayout] = useState<CloudLayout>('heat');
   const [scale, setScale] = useState<FontScaleMode>('cumulative');
   const [mineOnly, setMineOnly] = useState(false);
@@ -51,7 +62,24 @@ export default function MemePage() {
     () => (mineOnly ? api.myMemes(filter, 'used') : api.memeCloud(filter, layout, scale)),
     [mineOnly, JSON.stringify(filter), layout, scale],
   );
-  const lifecycle = useApi(() => api.memeLifecycle(filter, []), [JSON.stringify(filter)]);
+  /* 生命周期视图的月份窗口：锚定词云数据自身的「首现 ~ 最近」范围。
+     服务端 API-011 按请求窗口原样返回月度强度（含空月），窗口过宽时条带会落在
+     窗口远角、看上去全空；用数据范围做窗口后条带铺满视野。词云未就绪时给空数组，
+     由接口层兜底「最近 24 个月」。 */
+  const lifecycleMonths = useMemo(() => {
+    const stamps = (cloud.data?.entries ?? [])
+      .flatMap((entry) => [entry.firstSeenAt, entry.lastUsedAt])
+      .map((value) => value.slice(0, 7))
+      .filter((month) => /^\d{4}-\d{2}$/.test(month))
+      .sort();
+    const first = stamps[0];
+    const last = stamps[stamps.length - 1];
+    return first === undefined || last === undefined ? [] : [first, last];
+  }, [cloud.data]);
+  const lifecycle = useApi(
+    () => api.memeLifecycle(filter, lifecycleMonths),
+    [JSON.stringify(filter), lifecycleMonths.join(',')],
+  );
 
   const source = mineOnly ? mine : cloud;
   const entries = source.data?.entries ?? [];
@@ -94,7 +122,10 @@ export default function MemePage() {
               key={v.k}
               type="button"
               data-testid={`meme-view-${v.k}`}
-              onClick={() => setView(v.k)}
+              onClick={() => {
+                setView(v.k);
+                navigate(`/meme/${v.k}`);
+              }}
               className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors', view === v.k ? 'bg-white text-jade-700 shadow-sm' : 'text-ink-500 hover:text-ink-700')}
             >
               <v.icon size={13} />

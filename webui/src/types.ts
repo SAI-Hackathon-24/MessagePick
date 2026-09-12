@@ -218,6 +218,14 @@ export interface RawMessage {
   quotedMessageId?: string;
 }
 
+/** 消息上下文（REQ-007「回跳原文」）：目标消息 + 同群相邻消息 */
+export interface MessageContext {
+  groupName: string;
+  /** 目标消息标识（渲染时高亮） */
+  targetId: string;
+  messages: RawMessage[];
+}
+
 export type MessageKind = 'text' | 'image' | 'sticker';
 
 export const MESSAGE_KIND_LABEL: Record<MessageKind, string> = {
@@ -871,6 +879,8 @@ export interface IdentityAlignmentCandidate {
   /** 未确认与已否定均不生效 */
   status: 'unconfirmed' | 'confirmed' | 'rejected';
   confirmedAt?: string;
+  /** 仅展示层：超出展示上限、未展开的成员数（2026-09-13；候选可带数百成员） */
+  extraMemberCount?: number;
 }
 
 export const ALIGNMENT_STATUS_LABEL: Record<IdentityAlignmentCandidate['status'], string> = {

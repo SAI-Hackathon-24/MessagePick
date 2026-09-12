@@ -294,6 +294,8 @@ export function parseExtractedDraft(
     recognitionType: RecognitionType
     sourceMessageIds: Id[]
     members: MemberNameIndex
+    /** 来源消息时间（无年份日期就近补年用；缺省则不解析无年份写法）。 */
+    sourceTime?: Timestamp | null
   },
 ): ExtractedDraft | null {
   const headline = textOrNull(item.headline)
@@ -305,11 +307,11 @@ export function parseExtractedDraft(
     groupId: context.groupId,
     recognitionType: context.recognitionType,
     sourceMessageIds: [...context.sourceMessageIds],
-    timeElement: parseTimestamp(item.timeElement),
+    timeElement: parseTimestamp(item.timeElement, context.sourceTime),
     locationElement: textOrNull(item.locationElement),
     personElementMemberIds: mapPersonNames(personNames, context.members),
     subjectElement: textOrNull(item.subjectElement),
-    deadline: parseTimestamp(item.deadline),
+    deadline: parseTimestamp(item.deadline, context.sourceTime),
     headline,
     aiSummary,
     priority: normalizePriority(item.priority),
@@ -364,18 +366,66 @@ export function normalizePriority(value: unknown): Priority {
   return '中'
 }
 
-/** 时间要素解析：epoch 毫秒 / ISO 8601 文本；不可解析 → null（不猜，§5.1）。 */
-export function parseTimestamp(value: unknown): Timestamp | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+/** 时间要素解析：epoch 毫秒（需落在合理区间）/ ISO 8601 文本；无年份日期按来源消息时间就近补年；不可解析 → null（不猜，§5.1）。 */
+export function parseTimestamp(value: unknown, contextTime?: Timestamp | null): Timestamp | null {
+  if (typeof value === 'number') return plausibleEpoch(value)
   if (typeof value !== 'string') return null
   const text = value.trim()
   if (text.length === 0) return null
-  if (/^\d+$/.test(text)) {
-    const numeric = Number(text)
-    return Number.isFinite(numeric) ? Math.trunc(numeric) : null
+  if (/^\d+$/.test(text)) return plausibleEpoch(Number(text))
+  /* 无年份写法（模型常输出「09-24」「10.15」「9月24日」）：不得交给 Date.parse 回退解析
+     （JS 会把它固定成 2001 年）；按来源消息时间就近补年，无上下文则视为不可解析。 */
+  const yearless = matchYearlessDate(text)
+  if (yearless !== null) {
+    if (contextTime === undefined || contextTime === null) return null
+    return resolveYearlessDate(yearless, contextTime)
   }
   const parsed = Date.parse(text.includes('T') || /[zZ]|[+-]\d{2}:?\d{2}$/.test(text) ? text : text.replace(' ', 'T'))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/** 无年份日期分解（`M-D` / `M.D` / `M/D` / `M月D日`，可带 `HH:mm`）。 */
+interface YearlessDate {
+  month: number
+  day: number
+  hour: number
+  minute: number
+}
+
+/** epoch 毫秒合理区间（2000-01-01 ~ 2100-01-01）：区间外视为无效数字（如模型误输出的「2026」），不猜。 */
+const EPOCH_MIN_MS = 946_684_800_000
+const EPOCH_MAX_MS = 4_102_444_800_000
+
+function plausibleEpoch(value: number): Timestamp | null {
+  if (!Number.isFinite(value)) return null
+  const truncated = Math.trunc(value)
+  return truncated >= EPOCH_MIN_MS && truncated <= EPOCH_MAX_MS ? truncated : null
+}
+
+function matchYearlessDate(text: string): YearlessDate | null {
+  const match =
+    /^(\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?$/.exec(text) ??
+    /^(\d{1,2})月(\d{1,2})日(?:[ T]?(\d{1,2}):(\d{2}))?$/.exec(text)
+  if (match === null) return null
+  const month = Number(match[1])
+  const day = Number(match[2])
+  const hour = match[3] === undefined ? 0 : Number(match[3])
+  const minute = match[4] === undefined ? 0 : Number(match[4])
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return null
+  return { month, day, hour, minute }
+}
+
+/** 就近补年：在来源年份 ±1 内取与来源消息时间最接近的候选（覆盖「12 月聊 1 月的事」这类跨年语句）。 */
+function resolveYearlessDate(date: YearlessDate, contextTime: Timestamp): Timestamp | null {
+  const baseYear = new Date(contextTime).getFullYear()
+  let best: Timestamp | null = null
+  for (const year of [baseYear - 1, baseYear, baseYear + 1]) {
+    const candidate = new Date(year, date.month - 1, date.day, date.hour, date.minute).getTime()
+    const check = new Date(candidate)
+    if (check.getFullYear() !== year || check.getMonth() !== date.month - 1 || check.getDate() !== date.day) continue
+    if (best === null || Math.abs(candidate - contextTime) < Math.abs(best - contextTime)) best = candidate
+  }
+  return best
 }
 
 function textOrNull(value: unknown): string | null {

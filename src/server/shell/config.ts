@@ -25,16 +25,15 @@ export interface ShellConfig {
   model: {
     /** 模型服务地址（OpenAI 兼容）；空 = 未配置 */
     baseUrl: string
-    /** 模型凭据；只写不读回（详设 §4.3） */
-    apiKey: string
     /**
-     * 模型名（决策 8 的 `model.name`；空 = 未配置）。
-     * ⚠️ 该字段此前**只存在于引擎配置**（`EngineConfig.model.name`），未进入外壳配置，
-     * 也没有任何写入路径；而模型客户端要求它非空（空即抛「未配置模型名」），
-     * 导致整条分析链路在门口失败。此处补齐为可配置项。
+     * 模型名（`model.name`，mod-003 决策 8 的配置键；空 = 未配置）。
+     * ⚠️ 该字段曾只存在于引擎配置，未进入外壳配置也无写入路径；而模型客户端
+     * 要求它非空（空即抛「未配置模型名」），导致整条分析链路在门口失败。
      */
     name: string
-    /** 模型任务并发上限（1–8） */
+    /** 模型凭据；只写不读回（详设 §4.3） */
+    apiKey: string
+    /** 模型任务并发上限（1–64；云端模型端点并发余量充足，详见 engine/config.ts 校准说明） */
     taskConcurrency: number
   }
   cli: {
@@ -216,14 +215,14 @@ export function normalizeConfig(raw: unknown): { config: ShellConfig; issues: st
     config: {
       model: {
         baseUrl: stringValue(model['baseUrl'], DEFAULT_CONFIG.model.baseUrl, 'model.baseUrl', issues),
-        apiKey: stringValue(model['apiKey'], DEFAULT_CONFIG.model.apiKey, 'model.apiKey', issues),
         name: stringValue(model['name'], DEFAULT_CONFIG.model.name, 'model.name', issues),
+        apiKey: stringValue(model['apiKey'], DEFAULT_CONFIG.model.apiKey, 'model.apiKey', issues),
         taskConcurrency: intValue(
           model['taskConcurrency'],
           DEFAULT_CONFIG.model.taskConcurrency,
           'model.taskConcurrency',
           issues,
-          { min: 1, max: 8 },
+          { min: 1, max: 64 },
         ),
       },
       cli: {
@@ -342,8 +341,8 @@ export function settingsViewOf(config: ShellConfig): SettingsView {
   return {
     model: {
       baseUrl: config.model.baseUrl,
-      apiKeyConfigured: config.model.apiKey.length > 0,
       name: config.model.name,
+      apiKeyConfigured: config.model.apiKey.length > 0,
       taskConcurrency: config.model.taskConcurrency,
     },
     ingest: {
@@ -380,6 +379,10 @@ export function applySettingsPatch(config: ShellConfig, patch: SettingsPatch): P
     if (patch.model.baseUrl !== undefined && patch.model.baseUrl !== next.model.baseUrl) {
       next.model.baseUrl = patch.model.baseUrl
       changed.push('model.baseUrl')
+    }
+    if (patch.model.name !== undefined && patch.model.name !== next.model.name) {
+      next.model.name = patch.model.name
+      changed.push('model.name')
     }
     if (patch.model.apiKey !== undefined && patch.model.apiKey !== next.model.apiKey) {
       next.model.apiKey = patch.model.apiKey

@@ -11,11 +11,12 @@
  *     正文 = AI 总结 + 所有来源群消息；并内联给出成员兴趣提示（REQ-070）
  */
 import { useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { AlarmClock, Check, CheckCheck, Clock, EyeOff, ListFilter, MessageSquareText, Pencil, Sparkles } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
-import { deadlineHint, fmtDayLabel, fmtMD, num } from '@/lib/format';
+import { deadlineHint, fmtDayLabel, fmtDeadline, fmtMD, num } from '@/lib/format';
 import {
   EXTRACT_TYPE_LABEL,
   NOTICE_DIMENSION_LABEL,
@@ -34,7 +35,11 @@ const TODO_TONE = { pending: 'sky', done: 'jade', ignored: 'neutral' } as const;
 
 export default function ExtractPage() {
   const { filter, clearFilter } = useAppState();
+  /* 侧边栏子菜单驱动主视图：/extract/timeline | notices | todo（未知值回落时间轴） */
+  const { view: viewParam } = useParams<{ view: string }>();
+  const activeView: 'timeline' | 'notices' | 'todo' = viewParam === 'notices' ? 'notices' : viewParam === 'todo' ? 'todo' : 'timeline';
   const [dimension, setDimension] = useState<NoticeDimension>('todo');
+  const [todoFilter, setTodoFilter] = useState<'pending' | 'done' | 'ignored'>('pending');
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draftSubject, setDraftSubject] = useState('');
@@ -59,6 +64,19 @@ export default function ExtractPage() {
     const withDdl = items.filter((i) => i.elements.deadline).length;
     return { pending, high, withDdl };
   }, [items]);
+
+  /* 待办与 DDL 视图：按状态筛选；有 DDL 在前（按到期时间升序），其余按条目时间倒序 */
+  const todoItems = useMemo(() => {
+    const list = items.filter((it) => it.todoState === todoFilter);
+    return [...list].sort((a, b) => {
+      const da = a.elements.deadline;
+      const db = b.elements.deadline;
+      if (da !== undefined && db === undefined) return -1;
+      if (da === undefined && db !== undefined) return 1;
+      if (da !== undefined && db !== undefined && da !== db) return da.localeCompare(db);
+      return b.sentAt.localeCompare(a.sentAt);
+    });
+  }, [items, todoFilter]);
 
   const saveSubject = async (id: string) => {
     if (!draftSubject.trim()) return setEditing(null);
@@ -100,29 +118,34 @@ export default function ExtractPage() {
           <span className="font-medium">距到期不足 1 天且未处理：</span>
           {(due.data ?? []).map((t) => (
             <span key={t.id} className="rounded-lg bg-white/70 px-2 py-0.5 text-[11.5px]">
-              {t.subject} · {t.groupName} · {fmtMD(t.deadline)}
+              {t.subject} · {t.groupName} · {fmtDeadline(t.deadline)}
             </span>
           ))}
           <span className="mp-meta">（提醒只在应用打开时检查，不做后台常驻）</span>
         </NoticeBar>
       )}
 
-      {/* 视图与维度切换：这些都是模块二的视图状态，不是第二套筛选控件（REQ-049） */}
-      <Card className="flex flex-wrap items-center gap-2 px-3.5 py-2.5">
-        <span className="mp-meta">通知总览浏览维度</span>
-        {(Object.keys(NOTICE_DIMENSION_LABEL) as NoticeDimension[]).map((d) => (
-          <Chip key={d} active={dimension === d} onClick={() => setDimension(d)} data-testid={`dim-${d}`}>
-            {NOTICE_DIMENSION_LABEL[d]}
-          </Chip>
-        ))}
-        <span className="ml-auto mp-meta inline-flex items-center gap-1">
-          <Clock size={11} /> 消息时间轴：AI 按时间排序，群多选取自全局筛选条
-        </span>
-      </Card>
+      {/* 视图与维度切换：这些都是模块二的视图状态，不是第二套筛选控件（REQ-049）
+          ——待办视图自己有状态切换条，故此处只在时间轴 / 通知视图显示 */}
+      {activeView !== 'todo' && (
+        <Card className="flex flex-wrap items-center gap-2 px-3.5 py-2.5">
+          <span className="mp-meta">通知总览浏览维度</span>
+          {(Object.keys(NOTICE_DIMENSION_LABEL) as NoticeDimension[]).map((d) => (
+            <Chip key={d} active={dimension === d} onClick={() => setDimension(d)} data-testid={`dim-${d}`}>
+              {NOTICE_DIMENSION_LABEL[d]}
+            </Chip>
+          ))}
+          <span className="ml-auto mp-meta inline-flex items-center gap-1">
+            <Clock size={11} /> 消息时间轴：AI 按时间排序，群多选取自全局筛选条
+          </span>
+        </Card>
+      )}
 
       {timeline.error && <ErrorState error={timeline.error} onRetry={timeline.refetch} onClearFilter={clearFilter} />}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      {/* ---------------- 视图一：消息时间轴（REQ-047）+ 右侧通知总览 ---------------- */}
+      {activeView === 'timeline' && (
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* ---------------- 消息时间轴（REQ-047） ---------------- */}
         <section className="min-w-0">
           <SectionHeading
@@ -187,9 +210,7 @@ export default function ExtractPage() {
                 (groups.data ?? []).map((g) => (
                   <div key={g.key}>
                     <div className="mb-1.5 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-ink-700">
-                        {dimension === 'type' ? EXTRACT_TYPE_LABEL[g.key as keyof typeof EXTRACT_TYPE_LABEL] ?? g.key : dimension === 'priority' ? `优先级 ${PRIORITY_LABEL[g.key as Priority] ?? g.key}` : dimension === 'todo' ? TODO_STATE_LABEL[g.key as keyof typeof TODO_STATE_LABEL] ?? g.key : g.key}
-                      </span>
+                      <span className="text-xs font-semibold text-ink-700">{dimensionLabelOf(dimension, g.key)}</span>
                       <Badge tone="neutral">{g.items.length}</Badge>
                     </div>
                     <ul className="space-y-1">
@@ -218,11 +239,116 @@ export default function ExtractPage() {
             </ul>
           </Card>
         </aside>
-      </div>
+        </div>
+      )}
+
+      {/* ---------------- 视图二：通知总览（按维度分组全宽展开 —— REQ-045） ---------------- */}
+      {activeView === 'notices' && (
+        <Card>
+          <CardHeader
+            title={`通知总览 · ${NOTICE_DIMENSION_LABEL[dimension]}`}
+            icon={ListFilter}
+            subtitle="按维度分组集中展示（时间倒序；点击条目看详情）"
+          />
+          <div className="space-y-4 px-4 py-4">
+            {groups.loading && !groups.data ? (
+              <LoadingState rows={2} label="正在分组…" />
+            ) : groups.error ? (
+              <ErrorState error={groups.error} onRetry={groups.refetch} onClearFilter={clearFilter} className="!py-4" />
+            ) : (
+              (groups.data ?? []).map((g) => (
+                <section key={g.key} className="min-w-0">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-ink-700">{dimensionLabelOf(dimension, g.key)}</span>
+                    <Badge tone="neutral">{g.items.length}</Badge>
+                  </div>
+                  {g.items.length === 0 ? (
+                    <p className="mp-meta px-2">（无条目）</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {g.items.map((it) => (
+                        <li key={it.id}>
+                          <button
+                            type="button"
+                            onClick={() => setDetailId(it.id)}
+                            className="w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-jade-500/[0.06]"
+                          >
+                            <span className="block text-[12.5px] leading-snug text-ink-700 [overflow-wrap:anywhere]">{it.summaryLine || '（未命名条目）'}</span>
+                            <span className="mp-meta mt-0.5 block">
+                              {it.groupName}
+                              {it.sentAt === '' ? '' : ` · ${fmtMD(it.sentAt)}`}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              ))
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* ---------------- 视图三：待办与 DDL（REQ-046） ---------------- */}
+      {activeView === 'todo' && (
+        <section className="space-y-3">
+          <SectionHeading
+            title="待办与 DDL"
+            hint={`未处理 ${stats.pending} · 带 DDL ${stats.withDdl}${filter.groupIds.length > 1 ? ` · 已选 ${filter.groupIds.length} 个群并按时间合并` : ''}`}
+          />
+          <Card className="flex flex-wrap items-center gap-2 px-3.5 py-2.5">
+            <span className="mp-meta">待办状态</span>
+            {(['pending', 'done', 'ignored'] as const).map((s) => (
+              <Chip key={s} active={todoFilter === s} onClick={() => setTodoFilter(s)} data-testid={`todo-${s}`}>
+                {TODO_STATE_LABEL[s]}
+              </Chip>
+            ))}
+            <span className="ml-auto mp-meta">有 DDL 的排前面（按到期时间）；距到期不足 1 天会在应用内提醒（无后台常驻）</span>
+          </Card>
+          {timeline.loading && !items.length ? (
+            <LoadingState label="正在读取提取条目…" rows={4} />
+          ) : todoItems.length === 0 ? (
+            <EmptyState
+              title={`当前没有「${TODO_STATE_LABEL[todoFilter]}」的条目`}
+              description="可以切换状态查看其他条目，或清除筛选条件。"
+              onAction={clearFilter}
+            />
+          ) : (
+            <div className="space-y-2.5">
+              {todoItems.map((it) => (
+                <ExtractCard
+                  key={it.id}
+                  item={it}
+                  editing={editing === it.id}
+                  draftSubject={draftSubject}
+                  onDraftChange={setDraftSubject}
+                  onStartEdit={() => {
+                    setEditing(it.id);
+                    setDraftSubject(it.subject);
+                  }}
+                  onSaveSubject={() => void saveSubject(it.id)}
+                  onPriority={(p) => void changePriority(it.id, p)}
+                  onTodo={(s) => void markTodo(it.id, s)}
+                  onOpen={() => setDetailId(it.id)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <MessageDetailDrawer id={detailId} open={!!detailId} onClose={() => setDetailId(null)} />
     </div>
   );
+}
+
+/** 维度组名展示（通知总览面板与全宽视图共用）。 */
+function dimensionLabelOf(dimension: NoticeDimension, key: string): string {
+  if (dimension === 'type') return EXTRACT_TYPE_LABEL[key as keyof typeof EXTRACT_TYPE_LABEL] ?? key;
+  if (dimension === 'priority') return `优先级 ${PRIORITY_LABEL[key as Priority] ?? key}`;
+  if (dimension === 'todo') return TODO_STATE_LABEL[key as keyof typeof TODO_STATE_LABEL] ?? key;
+  return key;
 }
 
 function ExtractCard({
@@ -273,10 +399,10 @@ function ExtractCard({
 
       {/* 要素 */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {item.elements.time && <span className="mp-meta">时间：{fmtMD(item.elements.time)}</span>}
+        {item.elements.time && <span className="mp-meta">时间：{fmtDeadline(item.elements.time)}</span>}
         {item.elements.location && <span className="mp-meta">地点：{item.elements.location}</span>}
         {item.elements.people?.length ? <span className="mp-meta">人物：{item.elements.people.map((p) => p.name).join('、')}</span> : null}
-        {item.elements.deadline && <span className="mp-meta">DDL：{fmtMD(item.elements.deadline)}</span>}
+        {item.elements.deadline && <span className="mp-meta">DDL：{fmtDeadline(item.elements.deadline)}</span>}
         <span className="mp-meta">{item.sourceRefs.length} 条来源</span>
       </div>
 

@@ -58,6 +58,9 @@ export interface SocialIndexSnapshot {
 export class SocialIndex {
   #snapshot: SocialIndexSnapshot | null = null
   #stale = false
+  /** 群级增量覆盖：全量标志 + 已构建的群集合（触发去重用；随快照一起失效）。 */
+  #coverageFull = false
+  readonly #coveredGroups = new Set<Id>()
 
   /** 是否已有可用快照。 */
   get ready(): boolean {
@@ -94,15 +97,39 @@ export class SocialIndex {
     this.#stale = false
   }
 
-  /** 全量失效（epoch 变化 / 进程内重建前）。 */
+  /** 全量失效（epoch 变化 / 进程内重建前）；构建覆盖随快照一起清零。 */
   invalidate(): void {
     this.#snapshot = null
     this.#stale = false
+    this.#coverageFull = false
+    this.#coveredGroups.clear()
   }
 
   /** 标记过期（写操作后同步失效相关键的粗粒度落点）：保留旧快照供渲染，同时触发重建。 */
   markStale(): void {
     this.#stale = true
+  }
+
+  /** 是否已覆盖全部群（全量构建成功后为真）。 */
+  get coverageFull(): boolean {
+    return this.#coverageFull
+  }
+
+  /** 登记一次构建覆盖的群；`null` = 全量覆盖（吞并历次群级增量）。 */
+  markCoverage(groupIds: readonly Id[] | null): void {
+    if (groupIds === null) {
+      this.#coverageFull = true
+      this.#coveredGroups.clear()
+      return
+    }
+    if (this.#coverageFull) return
+    for (const groupId of groupIds) this.#coveredGroups.add(groupId)
+  }
+
+  /** 请求范围中尚未构建过的群（空数组 = 已全部覆盖；全量请求应检查 `coverageFull`）。 */
+  missingGroups(groupIds: readonly Id[]): Id[] {
+    if (this.#coverageFull) return []
+    return groupIds.filter((groupId) => !this.#coveredGroups.has(groupId))
   }
 
   /** 排障与测试用：读取快照本体（不复制）。 */

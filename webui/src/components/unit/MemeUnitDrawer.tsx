@@ -19,6 +19,7 @@ import { CORRECTION_LABEL, HEAT_STATE_LABEL, MEME_TYPE_COLOR, MEME_TYPE_LABEL, t
 import { Avatar, Badge, Card, CardHeader, Chip, Drawer, MiniStat, NoticeBar } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 import { MonthlyBars } from '@/components/charts/Charts';
+import { MessageContextDrawer } from './MessageContextDrawer';
 
 const HEAT_TONE = { active: 'jade', fading: 'amber', silent: 'neutral' } as const;
 
@@ -36,7 +37,8 @@ export function MemeUnitDrawer({
   anchor?: { x: number; y: number };
   onClose: () => void;
   onOpenVariant: (memeId: string) => void | Promise<void>;
-  onCorrected: (next: MemeUnit) => void;
+  /** 改判成功回调；`null` = 该单元已不可直接访问（不是梗 / 已合并），应关闭视图并刷新列表 */
+  onCorrected: (next: MemeUnit | null) => void;
   onGenerate: (unit: MemeUnit) => void;
 }) {
   const { claimDrawer, releaseDrawer } = useAppState();
@@ -45,6 +47,8 @@ export function MemeUnitDrawer({
   const [mergeTarget, setMergeTarget] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  /** 回跳原文的目标消息（消息上下文抽屉） */
+  const [contextId, setContextId] = useState<string | null>(null);
 
   /* 抽屉互斥：打开时登记，关闭时释放（避免与设置等其它 modal 叠加） */
   useEffect(() => {
@@ -67,9 +71,15 @@ export function MemeUnitDrawer({
     if (res.ok && res.data) {
       onCorrected(res.data);
       setMsg(`已改判为「${CORRECTION_LABEL[mark]}」，后续结果已按改判更新。`);
-    } else {
-      setMsg(`${res.error?.message ?? '改判失败'}（${res.error?.code ?? 'UNKNOWN'}）`);
+      return;
     }
+    if (res.ok) {
+      /* 「不是梗 / 合并到其他梗」：提交已成功、单元按设计不再可访问 ——
+         关闭抽屉并刷新列表（词云/统计中移除），不当作失败提示。 */
+      onCorrected(null);
+      return;
+    }
+    setMsg(`${res.error?.message ?? '改判失败'}（${res.error?.code ?? 'UNKNOWN'}）`);
   };
 
   return (
@@ -118,8 +128,8 @@ export function MemeUnitDrawer({
 
         {/* 关键时间（REQ-027 / AC-050：均可跳回原始消息） */}
         <section className="grid gap-2 sm:grid-cols-2">
-          <JumpTime label="首次出现" value={fmtMD(unit.firstSeenAt)} group={unit.firstSeenGroupName} ref_={unit.sourceRefs[0]} />
-          <JumpTime label="最近一次调用" value={`${fmtMD(unit.lastUsedAt)}（${unit.sinceLastUse}）`} group={unit.groupName} ref_={unit.sourceRefs[unit.sourceRefs.length - 1]} />
+          <JumpTime label="首次出现" value={fmtMD(unit.firstSeenAt)} group={unit.firstSeenGroupName} ref_={unit.sourceRefs[0]} onOpen={setContextId} />
+          <JumpTime label="最近一次调用" value={`${fmtMD(unit.lastUsedAt)}（${unit.sinceLastUse}）`} group={unit.groupName} ref_={unit.sourceRefs[unit.sourceRefs.length - 1]} onOpen={setContextId} />
         </section>
 
         {/* 数量与周环比（REQ-028） */}
@@ -236,6 +246,14 @@ export function MemeUnitDrawer({
                   <span className="tabular-nums">{fmtMD(h.sentAt)}</span>
                   <span className="rounded bg-ink-900/[0.05] px-1.5 py-0.5">{h.groupName}</span>
                   <Badge tone={h.kind === 'text' ? 'neutral' : 'amber'}>{h.kind === 'text' ? '文字' : h.kind === 'image' ? '图片' : '表情包'}</Badge>
+                  <button
+                    type="button"
+                    onClick={() => setContextId(h.messageId)}
+                    className="ml-auto inline-flex items-center gap-1 text-[11px] text-jade-700 hover:underline"
+                    title="查看该消息的上下文"
+                  >
+                    <ExternalLink size={10} /> 回原文
+                  </button>
                 </div>
                 {h.kind === 'text' ? (
                   <p className="mt-1 text-sm text-ink-700">{h.text}</p>
@@ -301,24 +319,31 @@ export function MemeUnitDrawer({
             <div className="mp-section-title mb-2">来源消息（可回跳原文）</div>
             <ul className="space-y-1.5">
               {unit.sourceRefs.slice(0, 6).map((r) => (
-                <SourceRow key={r.messageId} r={r} />
+                <SourceRow key={r.messageId} r={r} onOpen={setContextId} />
               ))}
             </ul>
           </section>
         )}
       </div>
+      {/* 回跳原文：消息上下文抽屉（REQ-007） */}
+      <MessageContextDrawer id={contextId} open={!!contextId} onClose={() => setContextId(null)} />
     </Drawer>
   );
 }
 
-function JumpTime({ label, value, group, ref_ }: { label: string; value: string; group: string; ref_?: SourceRef }) {
+function JumpTime({ label, value, group, ref_, onOpen }: { label: string; value: string; group: string; ref_?: SourceRef; onOpen: (messageId: string) => void }) {
   return (
     <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
       <div className="mp-meta">{label}</div>
       <div className="mt-0.5 text-sm font-medium tabular-nums text-ink-700">{value}</div>
       <div className="mp-meta mt-0.5">{group}</div>
       {ref_ && (
-        <button type="button" className="mp-meta mt-1 inline-flex items-center gap-1 text-jade-700 hover:underline" title={`来源消息：${ref_.excerpt.slice(0, 30)}`}>
+        <button
+          type="button"
+          onClick={() => onOpen(ref_.messageId)}
+          className="mp-meta mt-1 inline-flex items-center gap-1 text-jade-700 hover:underline"
+          title={`来源消息：${ref_.excerpt.slice(0, 30)}`}
+        >
           <ExternalLink size={10} /> 跳回原始消息
         </button>
       )}
@@ -326,13 +351,21 @@ function JumpTime({ label, value, group, ref_ }: { label: string; value: string;
   );
 }
 
-function SourceRow({ r }: { r: SourceRef }) {
+function SourceRow({ r, onOpen }: { r: SourceRef; onOpen: (messageId: string) => void }) {
   return (
     <li className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
       <div className="mp-meta flex flex-wrap items-center gap-2">
         <span className="font-medium text-ink-600">{r.senderName}</span>
         <span className="tabular-nums">{fmtMD(r.sentAt)}</span>
         <span className="rounded bg-ink-900/[0.05] px-1.5 py-0.5">{r.groupName}</span>
+        <button
+          type="button"
+          onClick={() => onOpen(r.messageId)}
+          className="ml-auto inline-flex items-center gap-1 text-[11px] text-jade-700 hover:underline"
+          title={`来源消息：${r.excerpt.slice(0, 30)}`}
+        >
+          <ExternalLink size={10} /> 回原文
+        </button>
       </div>
       <p className="mt-1 text-xs text-ink-700">{r.excerpt}</p>
     </li>
