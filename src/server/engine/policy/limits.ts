@@ -46,7 +46,9 @@ export interface EngineLimits {
 export const ENGINE_LIMITS: EngineLimits = {
   registryCapacity: 200,
   chunkMaxUnits: 40,
-  singleCallMaxUnits: 200,
+  /* 2026-09-13 校准：标签聚类等整入单次调用的输入随构建范围增长（实测 241 个标签即撞
+     原 200 上限 → stage4 INPUT_TOO_LARGE）；上调至 400（提示词仍远小于模型上下文）。 */
+  singleCallMaxUnits: 400,
   singleCallMaxChars: 120_000,
   maxUnitsPerTask: 2_000,
   workerDecodeMinChars: 262_144,

@@ -145,6 +145,13 @@ export interface StageOutcome {
 /** 每次模型任务的样本上限（护栏；取最近的消息）。 */
 export const SAMPLE_MESSAGE_LIMIT = 200
 
+/**
+ * 阶段 4 聚类分批上限。
+ * 标签数随构建群数增长（实测 241 个），整入单次调用会撞引擎 `singleCallMaxUnits`
+ * （`INPUT_TOO_LARGE`）→ 每批 ≤ 该上限，批内聚类、跨批不归并（与 extract 聚类同口径）。
+ */
+const STAGE4_BATCH_UNITS = 200
+
 /** 构建范围的群集合；`null` = 全量。 */
 function scopeGroupSet(env: StageEnv): ReadonlySet<string> | null {
   const groups = env.scope?.groupIds
@@ -331,12 +338,22 @@ export async function runStage4(env: StageEnv): Promise<StageOutcome> {
     return { counts: { tags: units.length, groups: 0, written: 0 }, failures }
   }
 
-  const outcome = await runTask(env, '4', clusterRequest(units), 'social.build.stage4')
-  if (!outcome.ok) {
-    failures.push(outcome.failure)
-    return { counts: { tags: units.length, groups: 0, written: 0 }, failures }
+  /* 分批聚类：标签会随构建群数增长，整入单次会撞引擎上限；批内聚类、批间不归并 */
+  const batches: (typeof units)[] = []
+  for (let offset = 0; offset < units.length; offset += STAGE4_BATCH_UNITS) {
+    batches.push(units.slice(offset, offset + STAGE4_BATCH_UNITS))
   }
-  const groups = planMergeGroups(parseClusterGroups(outcome.outcome.result), tagById)
+  const groups: TagMergeGroup[] = []
+  for (let index = 0; index < batches.length; index += 1) {
+    const batch = batches[index]
+    if (batch === undefined) continue
+    const outcome = await runTask(env, `4:${index}`, clusterRequest(batch), `social.build.stage4:${index}`)
+    if (!outcome.ok) {
+      failures.push(outcome.failure)
+      return { counts: { tags: units.length, groups: 0, written: 0 }, failures }
+    }
+    groups.push(...planMergeGroups(parseClusterGroups(outcome.outcome.result), tagById))
+  }
   const existingGroups = new Map(
     readOrThrow(env.store, 'DM-015', 'social.build.stage4.existing').map((row) => [row.mergeGroupId, row]),
   )
