@@ -67,9 +67,8 @@ export function useApi<T>(fetcher: () => Promise<ApiEnvelope<T>>, deps: unknown[
 }
 
 /**
- * 与 useApi 同构，但用于**不是** `ApiEnvelope` 的接口。
- * 目前 mock 层把「查询更新状态」之外的少数接口直接返回 ApiEnvelope，
- * 因此业务调用统一走 useApi；本 hook 供后续接入真实后端时按需使用。
+ * 与 useApi 同构，但用于**不是** `ApiEnvelope` 的接口（如直接返回普通对象的接口）。
+ * 业务调用统一走 useApi；本 hook 供按需使用。
  */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): { data: T | null; loading: boolean; error: Error | null; reload: () => void } {
   const [data, setData] = useState<T | null>(null);
