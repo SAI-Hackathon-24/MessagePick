@@ -1207,22 +1207,45 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     const socialRun = (async () => {
       const id = tracker.start({ kind: 'warmup', scope: '社交画像' })
       tracker.update(id, { state: 'running' })
-      const delays = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000]
+      /**
+       * 等待社交索引就绪。
+       *
+       * ⚠️ 该模块的索引快照在**构建阶段 8** 才物化，而构建是**逐人模型调用**
+       * （实测 997 次、数分钟）。此前用「固定次数退避重试」（合计约 18 秒），
+       * 必然在构建完成前耗尽 → 预热恒记为失败。
+       *
+       * 改为**时间预算 + 固定间隔轮询**（默认 5 分钟）：
+       *   · 只有 `IDENTITY_NOT_READY` 才继续等（它在构建完成前是正常中间态）；
+       *   · 其它错误立即失败，不掩盖真实问题；
+       *   · 超预算或构建真的失败 → 记 failed，日志给出原因，不静默。
+       * 预算内成功即成 succeeded，与构建耗时解耦。
+       */
+      const budgetMs = 5 * 60_000
+      const intervalMs = 3_000
+      const deadline = Date.now() + budgetMs
+      let lastCode = ''
       try {
-        for (let attempt = 0; ; attempt += 1) {
+        for (;;) {
           try {
             await Promise.all([social.getMyAffinity(), social.listIdentityCandidates()])
-            break
+            tracker.update(id, { state: 'succeeded' })
+            return
           } catch (error) {
-            const code = (error as { code?: string }).code
-            if (code !== 'IDENTITY_NOT_READY' || attempt >= delays.length) throw error
-            await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
+            lastCode = (error as { code?: string }).code ?? 'UNKNOWN'
+            if (lastCode !== 'IDENTITY_NOT_READY') throw error
+            if (Date.now() >= deadline) {
+              throw new Error(`等待社交索引就绪超时（${Math.round(budgetMs / 1000)}s，最后状态 ${lastCode}）`)
+            }
+            await new Promise((resolve) => setTimeout(resolve, intervalMs))
           }
         }
-        tracker.update(id, { state: 'succeeded' })
       } catch (error) {
         tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:social') })
-        logger.warn('warmup.failed', { module: 'MOD-007', error: error instanceof Error ? error.message : String(error) })
+        logger.warn('warmup.failed', {
+          module: 'MOD-007',
+          code: lastCode,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     })()
 
