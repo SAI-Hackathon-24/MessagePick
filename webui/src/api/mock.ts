@@ -42,7 +42,9 @@ import {
   unknownPersonIds,
 } from './fixtures';
 import type {
+  CorrectionMark,
   DataFlowNotice,
+  LocalCorrection,
   FadedMeme,
   MemeYearbook,
   MemeKingBoard,
@@ -102,7 +104,14 @@ const has = (hay: string | undefined, kw: string) => !kw || (hay ?? '').toLowerC
 const DATA_START_ISO = DATA_END.toISOString().slice(0, 4) + '-03-01';
 const DATA_END_ISO = DATA_END.toISOString().slice(0, 10);
 
-const activeMemes = () => MEMES.filter((m) => m.correction !== 'not_meme' && m.correction !== 'merged');
+/**
+ * 参与呈现的梗（改判立即影响后续结果 —— REQ-035）：
+ * · not_meme       从梗库移除
+ * · not_interested 隐藏但保留数据（不参与词云 / 列表 / 排行榜等一切呈现）
+ * · merged         已并入其他梗，自身不再单独呈现
+ */
+const activeMemes = () =>
+  MEMES.filter((m) => m.correction !== 'not_meme' && m.correction !== 'not_interested' && m.correction !== 'merged');
 
 /* -------------------------------------------------------------------------- */
 /* MOD-001 数据接入与更新                                                       */
@@ -217,9 +226,22 @@ export const mockMemeUnit = (memeId: string): MemeUnit | null => {
   const sorted = [...byMember.entries()].sort((a, b) => b[1] - a[1]);
   const maxCount = sorted[0]?.[1] ?? 1;
   const total = m.occurrences.length;
-  const kings = sorted
-    .filter(([, c]) => c === maxCount)
-    .map(([id, c]) => ({ memberId: id, name: memberById(id)?.displayName ?? id, count: c, ratio: Number((c / total).toFixed(3)) }));
+  /**
+   * 梗王：默认取使用次数最多者（并列全列），
+   * 若使用者做过「梗王标注有误」的人工指定，则以人工结果为准。
+   */
+  const kings = m.kingOverrideId
+    ? [
+        {
+          memberId: m.kingOverrideId,
+          name: memberById(m.kingOverrideId)?.displayName ?? m.kingOverrideId,
+          count: byMember.get(m.kingOverrideId) ?? 0,
+          ratio: Number(((byMember.get(m.kingOverrideId) ?? 0) / total).toFixed(3)),
+        },
+      ]
+    : sorted
+        .filter(([, c]) => c === maxCount)
+        .map(([id, c]) => ({ memberId: id, name: memberById(id)?.displayName ?? id, count: c, ratio: Number((c / total).toFixed(3)) }));
   const lastUsedAt = m.occurrences[m.occurrences.length - 1]?.at ?? DATA_END.toISOString();
   const sinceDays = Math.round((DATA_END.getTime() - Date.parse(lastUsedAt)) / 86400000);
   const lifecycle = lifecycleOf(m);
@@ -620,6 +642,76 @@ export const mockYearbook = (f: GlobalFilter): MemeYearbook => {
     enough: topMemes.length >= 3 && (top?.occurrences ?? 0) >= 5,
   };
 };
+
+/* -------------------------------------------------------------------------- */
+/* 本地纠正 / 黑名单（与兴趣标签一致：本地优先，立即生效）                        */
+/* -------------------------------------------------------------------------- */
+/**
+ * 纠正记录表。key = 梗标识。
+ * 设计目标：后端是模型周期总结的产物，可能与使用者纠正冲突；
+ * 因此这里把本地记录当作**黑名单**——`activeMemes()` 每次都按它过滤，
+ * 后端的下一次分析结果也不会把这些条目「纠正回去」。
+ */
+const LOCAL_CORRECTIONS = new Map<string, LocalCorrection>();
+
+export const listCorrections = (): LocalCorrection[] =>
+  [...LOCAL_CORRECTIONS.values()].sort((a, b) => b.correctedAt.localeCompare(a.correctedAt));
+
+export const setCorrection = (
+  memeId: string,
+  mark: CorrectionMark,
+  payload?: { mergeTargetId?: string; kingOverride?: { memberId: string; name: string } },
+): MemeUnit | null => {
+  const meme = MEMES.find((m) => m.id === memeId);
+  if (!meme) throw new Error('NOT_FOUND');
+
+  if (mark === 'none') {
+    LOCAL_CORRECTIONS.delete(memeId);
+    meme.correction = 'none';
+    meme.mergedTo = undefined;
+    meme.kingOverrideId = undefined;
+    return mockMemeUnit(memeId);
+  }
+
+  if (mark === 'merged') {
+    const target = MEMES.find((m) => m.id === payload?.mergeTargetId);
+    // 与 REQ-040 一致：不做跨群自动合并，只允许同群合并
+    if (!target) throw new Error('NOT_FOUND');
+    if (target.groupId !== meme.groupId) throw new Error('INVALID_INPUT');
+    meme.mergedTo = target.id;
+  }
+  if (mark === 'king_wrong' && !payload?.kingOverride) throw new Error('INVALID_INPUT');
+
+  meme.correction = mark;
+  if (mark === 'king_wrong' && payload?.kingOverride) meme.kingOverrideId = payload.kingOverride.memberId;
+
+  const target = MEMES.find((m) => m.id === meme.mergedTo);
+  LOCAL_CORRECTIONS.set(memeId, {
+    memeId,
+    memeName: meme.name,
+    mark,
+    mergeTargetId: meme.mergedTo,
+    mergeTargetName: target?.name,
+    kingOverride: payload?.kingOverride,
+    correctedAt: new Date().toISOString(),
+  });
+  return mockMemeUnit(memeId);
+};
+
+/**
+ * 模拟「后端与本地纠正冲突」：初始化时人为制造一条与本地不一致的后端建议，
+ * 用于演示黑名单优先级（真实接入后由后端返回，前端不改口径）。
+ */
+const BACKEND_SUGGESTED_CORRECTIONS: { memeId: string; backendMark: CorrectionMark; note: string }[] = [
+  { memeId: 'meme3', backendMark: 'not_meme', note: '后端模型建议：该词更像普通词而非梗' },
+];
+
+/** 与本地记录冲突的后端建议（本地优先，仅用于界面提示） */
+export const correctionConflicts = (): { memeId: string; memeName: string; backendMark: CorrectionMark; note: string }[] =>
+  BACKEND_SUGGESTED_CORRECTIONS.filter((b) => {
+    const local = LOCAL_CORRECTIONS.get(b.memeId);
+    return local && local.mark !== b.backendMark;
+  }).map((b) => ({ ...b, memeName: MEMES.find((m) => m.id === b.memeId)?.name ?? b.memeId }));
 
 /** 活跃度综合分：实现放在 fixtures（与原始指标同源），这里只做再导出 */
 export const buildActivityBreakdown = activityBreakdownOf;

@@ -275,6 +275,8 @@ export interface MemeRecord {
   /** 纠正标记：改判后不再进入词云与统计结果（REQ-035） */
   correction: 'none' | 'not_meme' | 'not_interested' | 'merged' | 'king_wrong';
   mergedTo?: string;
+  /** 「梗王标注有误」时人工指定的成员（覆盖模型统计出的梗王） */
+  kingOverrideId?: string;
   /** 相关变体（DM-008） */
   variantIds: string[];
 }

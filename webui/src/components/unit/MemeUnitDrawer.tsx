@@ -13,9 +13,10 @@ import { useState } from 'react';
 import { ExternalLink, MessageSquareQuote, Sparkles, Table2, Wand2 } from 'lucide-react';
 import { useEffect } from 'react';
 import { api } from '@/api';
+import { MemeCorrectMenu } from './MemeCorrectMenu';
 import { useAppState } from '@/state/appState';
 import { fmtMD } from '@/lib/format';
-import { CORRECTION_LABEL, HEAT_STATE_LABEL, MEME_TYPE_COLOR, MEME_TYPE_LABEL, type CorrectionMark, type MemeUnit, type SourceRef } from '@/types';
+import { CORRECTION_LABEL, HEAT_STATE_LABEL, MEME_TYPE_COLOR, MEME_TYPE_LABEL, type MemeUnit, type SourceRef } from '@/types';
 import { Avatar, Badge, Card, CardHeader, Chip, Drawer, MiniStat, NoticeBar } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 import { MonthlyBars } from '@/components/charts/Charts';
@@ -42,8 +43,6 @@ export function MemeUnitDrawer({
   const { claimDrawer, releaseDrawer } = useAppState();
   const [showTable, setShowTable] = useState(false);
   const [showAllHighlights, setShowAllHighlights] = useState(false);
-  const [mergeTarget, setMergeTarget] = useState('');
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   /* 抽屉互斥：打开时登记，关闭时释放（避免与设置等其它 modal 叠加） */
@@ -59,17 +58,10 @@ export function MemeUnitDrawer({
   const highlights = showAllHighlights ? unit.highlights : unit.highlights.slice(0, 3);
   const trendUp = unit.weekOverWeek >= 0;
 
-  const correct = async (mark: CorrectionMark) => {
-    setBusy(true);
-    setMsg(null);
-    const res = await api.submitCorrection(unit.memeId, mark, mark === 'merged' ? mergeTarget : undefined);
-    setBusy(false);
-    if (res.ok && res.data) {
-      onCorrected(res.data);
-      setMsg(`已改判为「${CORRECTION_LABEL[mark]}」，后续结果已按改判更新。`);
-    } else {
-      setMsg(`${res.error?.message ?? '改判失败'}（${res.error?.code ?? 'UNKNOWN'}）`);
-    }
+  /** 改判后按 id 重新拉取单元（撤销时 id 不变，内容会恢复） */
+  const onCorrectedById = async (memeId: string) => {
+    const res = await api.memeUnit(memeId);
+    if (res.ok && res.data) onCorrected(res.data);
   };
 
   return (
@@ -267,30 +259,36 @@ export function MemeUnitDrawer({
           </section>
         )}
 
-        {/* 纠正改判（REQ-035 / AC-022） */}
+        {/* 纠正改判（REQ-035 / AC-022）：与列表使用同一套菜单，机制保持一致 */}
         <Card>
-          <CardHeader title="纠正 AI 的判断" icon={Sparkles} subtitle="改判立即影响后续结果（词云、统计与检索都会按改判后的结果重算）" />
-          <div className="space-y-3 px-4 py-3.5">
-            <div className="flex flex-wrap gap-1.5">
-              {(['not_meme', 'not_interested', 'king_wrong'] as CorrectionMark[]).map((m) => (
-                <Chip key={m} active={unit.correction === m} onClick={() => void correct(m)}>
-                  {CORRECTION_LABEL[m]}
-                </Chip>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mp-meta">合并到其他梗</span>
-              <input
-                value={mergeTarget}
-                onChange={(e) => setMergeTarget(e.target.value)}
-                placeholder="输入目标梗名或标识"
-                className="w-[200px] rounded-lg border border-ink-900/[0.1] px-2 py-1 text-xs outline-none focus:border-jade-500/50"
+          <CardHeader
+            title="纠正 AI 的判断"
+            icon={Sparkles}
+            subtitle="四类改判：这不是梗 / 不感兴趣 / 合并到其他梗 / 梗王标注有误。改判立即影响词云、列表与统计，可随时撤销"
+            right={
+              <MemeCorrectMenu
+                memeId={unit.memeId}
+                memeName={unit.name}
+                groupId={unit.groupId}
+                current={unit.correction}
+                onDone={(msg) => {
+                  setMsg(msg);
+                  void onCorrectedById(unit.memeId);
+                }}
               />
-              <Button size="sm" variant="outline" disabled={!mergeTarget || busy} onClick={() => void correct('merged')}>
-                {CORRECTION_LABEL.merged}
-              </Button>
-            </div>
-            <p className="mp-meta">只能合并到与本梗同属一个群的目标（跨群自动合并不做 —— REQ-040）。</p>
+            }
+          />
+          <div className="space-y-2 px-4 py-3.5">
+            {unit.correction !== 'none' && (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-coral-500/25 bg-coral-500/[0.05] px-3 py-2">
+                <Badge tone="coral">当前已改判：{CORRECTION_LABEL[unit.correction]}</Badge>
+                {unit.king.members[0] && <span className="mp-meta">梗王：{unit.king.members.map((k) => k.name).join('、')}</span>}
+              </div>
+            )}
+            <p className="mp-meta leading-relaxed">
+              改判会写入本地黑名单并立即生效：后端模型下次总结时不会把它改回去；撤销后恢复原始呈现。
+              「合并到其他梗」只允许同群合并（不做跨群自动合并 —— REQ-040）。
+            </p>
             {msg && <NoticeBar tone="jade">{msg}</NoticeBar>}
           </div>
         </Card>

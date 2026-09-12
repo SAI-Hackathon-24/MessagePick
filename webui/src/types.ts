@@ -470,6 +470,33 @@ export interface MemeUnit {
 /** 纠正改判四类（REQ-035 / API-012） */
 export type CorrectionMark = 'none' | 'not_meme' | 'not_interested' | 'merged' | 'king_wrong';
 
+/**
+ * 本地纠正记录（模块一）
+ * =============================================================================
+ * 与兴趣标签的增删改一致：纠正结果先写本地状态、**立即生效并刷新词云**，
+ * 同时把记录回传后端（`API-012`）。之所以要「本地优先」，是因为后端是模型
+ * 周期总结出来的，可能与使用者的纠正冲突 —— 本地记录即**黑名单**：
+ * 再次拿到后端结果时，这些条目仍按本地口径处理，不会被模型重新「纠正回去」。
+ *
+ * 四类动作的语义（均可撤销）：
+ *   · not_meme       这不是梗      → 从梗库移除（不参与词云与统计）
+ *   · not_interested 不感兴趣      → 隐藏但保留数据（不参与呈现，仍可统计与撤销）
+ *   · merged         合并到其他梗  → 出现记录并入目标梗，自身不再单独呈现
+ *   · king_wrong     梗王标注有误  → 用人工指定的成员覆盖模型给出的梗王
+ */
+export interface LocalCorrection {
+  memeId: string;
+  /** 梗名快照：列表移除后仍能显示改判记录 */
+  memeName: string;
+  mark: CorrectionMark;
+  /** merged 时的目标梗 */
+  mergeTargetId?: string;
+  mergeTargetName?: string;
+  /** king_wrong 时人工指定的成员 */
+  kingOverride?: { memberId: string; name: string };
+  correctedAt: string;
+}
+
 export const CORRECTION_LABEL: Record<CorrectionMark, string> = {
   none: '无',
   not_meme: '这不是梗',

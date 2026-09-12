@@ -37,6 +37,7 @@ import {
   type MaterialConsent,
   type MaterialTier,
   type MemeCloudResult,
+  type LocalCorrection,
   type MemeKingBoard,
   type MemeYearbook,
   type MemeContext,
@@ -273,13 +274,49 @@ export const api = {
     return ok(data);
   },
 
+  /**
+   * 查询本地纠正记录（黑名单）
+   * 这些是本地的改判，优先于后端模型结论；后端再次返回结果时不会被覆盖回去。
+   */
+  async listCorrections(): Promise<ApiEnvelope<LocalCorrection[]>> {
+    await tick(60);
+    if (MODE === 'http') return http<LocalCorrection[]>('/memes/corrections');
+    return ok(m.listCorrections());
+  },
+
+  /** 撤销某条改判：本地记录删除、恢复原始呈现 */
+  async revertCorrection(memeId: string): Promise<ApiEnvelope<MemeUnit | null>> {
+    await tick(150);
+    if (MODE === 'http') return http<MemeUnit | null>(`/memes/${memeId}/correction`, { method: 'DELETE' });
+    try {
+      return ok(m.setCorrection(memeId, 'none'));
+    } catch (e) {
+      return mapThrown(e, 'STORAGE_UNAVAILABLE', '撤销失败');
+    }
+  },
+
+  /**
+   * 与本地纠正冲突的后端建议。
+   * 后端是模型周期总结的产物，可能与使用者改判冲突；本地优先，这里只做提示。
+   */
+  async correctionConflicts(): Promise<ApiEnvelope<ReturnType<typeof m.correctionConflicts>>> {
+    await tick(60);
+    if (MODE === 'http') return http('/memes/corrections/conflicts');
+    return ok(m.correctionConflicts());
+  },
+
   /** API-012 提交纠正改判：四类改判立即生效（REQ-035） */
-  async submitCorrection(memeId: string, mark: MemeUnit['correction'], mergeTargetId?: string): Promise<ApiEnvelope<MemeUnit>> {
+  async submitCorrection(
+    memeId: string,
+    mark: MemeUnit['correction'],
+    mergeTargetId?: string,
+    kingOverride?: { memberId: string; name: string },
+  ): Promise<ApiEnvelope<MemeUnit>> {
     await tick(200);
     if (MODE === 'http')
-      return http<MemeUnit>(`/memes/${memeId}/correction`, { method: 'POST', body: JSON.stringify({ mark, mergeTargetId }) });
+      return http<MemeUnit>(`/memes/${memeId}/correction`, { method: 'POST', body: JSON.stringify({ mark, mergeTargetId, kingOverride }) });
     try {
-      const data = m.mockSubmitCorrection(memeId, mark, mergeTargetId);
+      const data = m.setCorrection(memeId, mark, { mergeTargetId, kingOverride });
       if (!data) return fail('NOT_FOUND', '该梗不存在');
       return ok(data);
     } catch (e) {

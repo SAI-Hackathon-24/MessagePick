@@ -28,6 +28,8 @@ import { Button } from '@/components/shell/Button';
 import { Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { MemeWordCloud } from '@/components/charts/MemeWordCloud';
 import { MemeCardStrip } from '@/components/unit/MemeCardStrip';
+import { MemeCorrectMenu } from '@/components/unit/MemeCorrectMenu';
+import { CorrectionsPanel } from '@/components/unit/CorrectionsPanel';
 import { LifecycleHeatmap } from '@/components/charts/Charts';
 import { MemeUnitDrawer } from '@/components/unit/MemeUnitDrawer';
 import { GeneratePanel } from '@/components/unit/GeneratePanel';
@@ -44,6 +46,9 @@ export default function MemePage() {
   const [selected, setSelected] = useState<MemeUnit | null>(null);
   const [generateFor, setGenerateFor] = useState<MemeUnit | null>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | undefined>();
+  const [correctMsg, setCorrectMsg] = useState<string | null>(null);
+  /** 每次改判后自增，驱动「已改判面板」重新取数 */
+  const [correctionsVersion, setCorrectionsVersion] = useState(0);
 
   const cloud = useApi(() => api.memeCloud(filter, layout, 'cumulative'), [JSON.stringify(filter), layout]);
   /* 「我相关」视角（REQ-006）：与主查询同构，切换时只换数据源 */
@@ -215,7 +220,12 @@ export default function MemePage() {
       {/* ---------------- 列表 / 表格等价视图 ---------------- */}
       {view === 'table' && (
         <Card className="overflow-hidden">
-          <CardHeader title="梗列表（等价数据，可复制）" icon={Table2} subtitle="与词云使用同口径的同一份数据（REQ-021）" />
+          <CardHeader
+            title="梗列表（等价数据，可复制）"
+            icon={Table2}
+            subtitle="与词云使用同口径的同一份数据（REQ-021）；每行都可就地纠正 AI 的判断"
+            right={<span className="mp-meta">改判后词云与列表会立即刷新</span>}
+          />
           <div className="overflow-x-auto px-4 py-3.5">
             <table className="w-full text-left text-xs">
               <thead>
@@ -226,7 +236,8 @@ export default function MemePage() {
                   <th className="py-2 pr-3 text-right font-medium">出现次数</th>
                   <th className="py-2 pr-3 font-medium">首次出现</th>
                   <th className="py-2 pr-3 font-medium">最近调用</th>
-                  <th className="py-2 font-medium">我相关</th>
+                  <th className="py-2 pr-3 font-medium">我相关</th>
+                  <th className="py-2 font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -243,7 +254,19 @@ export default function MemePage() {
                     <td className="py-2 pr-3 text-right tabular-nums">{e.occurrences}</td>
                     <td className="py-2 pr-3 tabular-nums text-ink-500">{fmtMD(e.firstSeenAt)}</td>
                     <td className="py-2 pr-3 tabular-nums text-ink-500">{fmtMD(e.lastUsedAt)}</td>
-                    <td className="py-2">{e.mine ? '是' : '—'}</td>
+                    <td className="py-2 pr-3">{e.mine ? '是' : '—'}</td>
+                    <td className="py-2" onClick={(ev) => ev.stopPropagation()}>
+                      <MemeCorrectMenu
+                        memeId={e.memeId}
+                        memeName={e.name}
+                        onDone={(msg) => {
+                          setCorrectMsg(msg);
+                          setCorrectionsVersion((v) => v + 1);
+                          cloud.refetch();
+                          lifecycle.refetch();
+                        }}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -251,6 +274,10 @@ export default function MemePage() {
           </div>
         </Card>
       )}
+
+      {/* 改判回执 + 已改判（黑名单）面板 */}
+      {correctMsg && <NoticeBar tone="jade">{correctMsg}</NoticeBar>}
+      <CorrectionsPanel version={correctionsVersion} onChanged={() => { cloud.refetch(); lifecycle.refetch(); }} />
 
       {/* ---------------- 梗单元抽屉 ---------------- */}
       <MemeUnitDrawer

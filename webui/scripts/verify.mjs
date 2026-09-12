@@ -828,6 +828,94 @@ const insufficientBranch = await ev(`(async () => {
 })()`);
 rec('年鉴', '数据不足时显示「数据还不够写年鉴」（分支存在，不报错）', insufficientBranch === true, `分支文案存在=${insufficientBranch}`);
 
+
+/* ================================================================== */
+/* 第五轮：梗单元纠正（列表入口 + 四类动作 + 本地黑名单 + 撤销）            */
+/* ================================================================== */
+
+/* 列表行上必须有纠正入口，且四个动作齐全 */
+await goto('#/meme/table');
+await waitFor('main table tbody tr');
+const corrMenu = await ev(`(() => {
+  const rows = document.querySelectorAll('main table tbody tr');
+  const menus = document.querySelectorAll('[data-testid^="correct-menu-"]');
+  return { rows: rows.length, menus: menus.length };
+})()`);
+rec('纠正入口', '梗列表每一行都有纠正入口（与梗单元一致）', corrMenu.rows > 0 && corrMenu.menus === corrMenu.rows,
+  `列表行=${corrMenu.rows} 纠正入口=${corrMenu.menus}`);
+
+await ev(`(() => { const b = document.querySelector('[data-testid^="correct-menu-"]'); if (b) b.click(); return !!b; })()`);
+await sleep(600);
+const actions = await ev(`JSON.stringify(['not_meme', 'not_interested', 'merged', 'king_wrong'].map((k) => !!document.querySelector('[data-testid^="correct-' + k + '-"]')))`);
+const actionList = JSON.parse(actions);
+rec('纠正动作', '四个动作齐全：这不是梗 / 不感兴趣 / 合并到其他梗 / 梗王标注有误', actionList.every(Boolean), `四类=${actionList.filter(Boolean).length}/4`);
+
+/* 执行一次「不感兴趣」：应立即生效（移出列表）并写入本地黑名单，且可撤销 */
+const picked = await ev(`(() => {
+  const menu = document.querySelector('[data-testid^="correct-menu-"]');
+  const id = menu ? menu.getAttribute('data-testid').replace('correct-menu-', '') : null;
+  const row = menu ? menu.closest('tr') : null;
+  const name = row ? (row.querySelector('td:nth-child(1)')?.textContent || '').trim() : '';
+  const rowsBefore = document.querySelectorAll('main table tbody tr').length;
+  const b = document.querySelector('[data-testid^="correct-not_interested-"]');
+  if (!b || !id) return { ok: false };
+  b.click();
+  return { ok: true, id, name, rowsBefore };
+})()`);
+await sleep(2800);
+const afterCorrection = await ev(`(() => {
+  const t = document.body.innerText;
+  const panel = document.querySelector('[data-testid="corrections-panel"]');
+  const rows = [...document.querySelectorAll('main table tbody tr')];
+  // 只在**表格行**范围内判断：该梗名同时会出现在「已改判面板」里，不能用整页文本
+  return {
+    rowsAfter: rows.length,
+    stillInTable: rows.some((r) => (r.innerText || '').includes(${JSON.stringify(picked.name || '__none__')})),
+    panelShown: !!panel,
+    panelText: (panel?.innerText || '').replace(/\\s+/g, ' ').slice(0, 120),
+    hasRevert: !!panel && [...panel.querySelectorAll('button')].some((b) => /撤销/.test(b.textContent || '')),
+    hasBlacklistNote: /本地黑名单/.test(t) && /优先于模型结论/.test(t),
+  };
+})()`);
+rec('纠正生效', '改判「不感兴趣」立即生效：该梗移出列表 + 写入本地黑名单 + 可撤销',
+  picked.ok && !afterCorrection.stillInTable && afterCorrection.rowsAfter === picked.rowsBefore - 1 && afterCorrection.panelShown && afterCorrection.hasRevert && afterCorrection.hasBlacklistNote,
+  `原梗=${picked.name} 行数 ${picked.rowsBefore}→${afterCorrection.rowsAfter} 仍在列表=${afterCorrection.stillInTable} 黑名单面板=${afterCorrection.panelShown} 撤销=${afterCorrection.hasRevert}`);
+
+/* 撤销后应恢复呈现 */
+const reverted = await ev(`(() => {
+  const panel = document.querySelector('[data-testid="corrections-panel"]');
+  const b = panel ? [...panel.querySelectorAll('button')].find((x) => /撤销/.test(x.textContent || '')) : null;
+  if (!b) return { ok: false };
+  b.click();
+  return { ok: true };
+})()`);
+await sleep(2600);
+const afterRevert = await ev(`(() => {
+  const rows = [...document.querySelectorAll('main table tbody tr')];
+  const panel = document.querySelector('[data-testid="corrections-panel"]');
+  return {
+    backInTable: rows.some((r) => (r.innerText || '').includes(${JSON.stringify(picked.name || '__none__')})),
+    panelGone: !panel,
+  };
+})()`);
+rec('纠正撤销', '撤销改判后该梗恢复呈现，黑名单记录消失', reverted.ok && afterRevert.backInTable && afterRevert.panelGone,
+  `恢复=${afterRevert.backInTable} 记录清空=${afterRevert.panelGone}`);
+
+/* 梗单元内也有同一套入口 */
+await goto('#/meme/cloud');
+await waitFor('[data-testid="meme-card-strip"]');
+await ev(`(() => { const c = document.querySelector('[data-testid="meme-card"]'); if (c) c.click(); return !!c; })()`);
+await waitFor('[data-drawer-kind="meme-unit"]', 20);
+const drawerCorr = await ev(`(() => {
+  const d = document.querySelector('[data-drawer-kind="meme-unit"]');
+  return {
+    hasMenu: !!d && !!d.querySelector('[data-testid^="correct-menu-"]'),
+    hasFourHint: ['这不是梗', '不感兴趣', '合并到其他梗', '梗王标注有误'].every((k) => (d?.innerText || '').includes(k)),
+  };
+})()`);
+rec('纠正入口', '梗单元内提供同一套纠正入口（机制一致）', drawerCorr.hasMenu && drawerCorr.hasFourHint,
+  `菜单=${drawerCorr.hasMenu} 四类说明=${drawerCorr.hasFourHint}`);
+
 console.log('\n===== 汇总 =====');
 const passed = results.filter((r) => r.pass).length;
 console.log(`${passed}/${results.length} 通过`);
