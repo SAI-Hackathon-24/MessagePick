@@ -56,6 +56,8 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
   const chartRef = useRef<{ setOption: (o: unknown, notMerge?: boolean) => void; resize: () => void; dispose: () => void; on: (e: string, h: (p: unknown) => void) => void; off: (e: string) => void } | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  /* 实例创建计数器：事件绑定 effect 依赖它（创建是异步的，见下方注释） */
+  const [chartEpoch, setChartEpoch] = useState(0);
 
   /* 懒加载 ECharts + 注册所需模块 */
   useEffect(() => {
@@ -82,6 +84,8 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
       if (disposed || !ref.current) return;
       const chart = echarts.init(ref.current);
       chartRef.current = chart as unknown as typeof chartRef.current;
+      /* 实例就绪后自增：事件绑定 effect 等它再次执行——否则绑定发生在实例创建前、之后永不重试 */
+      setChartEpoch((value) => value + 1);
       chart.setOption(option, true);
       const ro = new ResizeObserver(() => chart.resize());
       ro.observe(ref.current);
@@ -111,9 +115,16 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
     if (!chart || !onEvents) return;
     Object.entries(onEvents).forEach(([evt, handler]) => chart.on(evt, handler));
     return () => {
-      Object.keys(onEvents).forEach((evt) => chart.off(evt));
+      Object.keys(onEvents).forEach((evt) => {
+        try {
+          chart.off(evt);
+        } catch {
+          /* 实例可能已随卸载销毁 */
+        }
+      });
     };
-  }, [onEvents, ready]);
+    // chartEpoch：实例创建完成后重新绑定（首次执行时实例尚未就绪）
+  }, [onEvents, ready, chartEpoch]);
 
   if (failed) {
     return (

@@ -539,7 +539,15 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         if (values.length === 0) throw invalidInput('请至少选择一个群（不传 groupIds = 分析全部群）', scope, { field: 'groupIds' })
         groupIds = [...new Set(values)]
       }
-      void runAnalysis('manual', groupIds)
+      const onlyRaw = payload['only']
+      let only: 'meme' | 'extract' | 'both' = 'both'
+      if (onlyRaw !== undefined && onlyRaw !== null) {
+        if (onlyRaw !== 'meme' && onlyRaw !== 'extract') {
+          throw invalidInput('字段 only 只能是 meme / extract', scope, { field: 'only' })
+        }
+        only = onlyRaw
+      }
+      void runAnalysis('manual', groupIds, only)
       res.json(
         success(metaOf(req), {
           started: true as const,
@@ -600,6 +608,46 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       const entryId = pathParam(req, 'entryId')
       if (entryId.length === 0) throw invalidInput('缺少条目标识', 'message-detail')
       res.json(success(metaOf(req), await assembleDetail(entryId)))
+    }),
+  )
+
+  // 消息上下文（非契约；REQ-007「回跳原文」的落点）：目标消息 + 同群前后各 8 条
+  app.get(
+    '/api/messages/:messageId',
+    handle('messages:context', (req, res) => {
+      const scope = 'messages:context'
+      const messageId = pathParam(req, 'messageId')
+      if (messageId.length === 0) throw invalidInput('缺少消息标识', scope)
+      const payload = messageContextOf(messageId)
+      if (payload === null) {
+        res.status(404).json(failure(metaOf(req), shellEnvelope('NOT_FOUND', '消息不存在', scope)))
+        return
+      }
+      res.json(success(metaOf(req), payload))
+    }),
+  )
+
+  // 消息批量读（非契约；REQ-007 引用的逐条展示字段）：ids 逗号分隔，上限 200
+  app.get(
+    '/api/messages',
+    handle('messages:batch', (req, res) => {
+      const scope = 'messages:batch'
+      const raw = queryFirst(req.query['ids'])
+      if (raw === null || raw.trim().length === 0) throw invalidInput('缺少必填参数 ids', scope, { field: 'ids' })
+      const ids = [
+        ...new Set(
+          raw
+            .split(',')
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+        ),
+      ].slice(0, 200)
+      const byId = new Map(readAll('DM-003').map((message) => [message.messageId, message]))
+      const messages = ids
+        .map((id) => byId.get(id))
+        .filter((message): message is EntityRecord<'DM-003'> => message !== undefined)
+        .map((message) => messageDtoOf(message))
+      res.json(success(metaOf(req), { messages }))
     }),
   )
 
@@ -1047,6 +1095,53 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   /** 展示名清洗：去掉控制字符（微信昵称可能带 \u007f 等占位符）。 */
   const cleanName = (value: string): string => value.replace(/[\u0000-\u001f\u007f]/g, '').trim()
 
+  /** 消息线格式（与 `/api/message-detail` 的来源消息同构；名称由前端按 senderMemberId 解析）。 */
+  function messageDtoOf(message: EntityRecord<'DM-003'>): {
+    messageId: Id
+    groupId: Id
+    senderMemberId: Id
+    sentAt: number
+    kind: string
+    text: string | null
+    mediaRef: string | null
+    mentionedMemberIds: Id[] | null
+    quotedMessageId: Id | null
+  } {
+    return {
+      messageId: message.messageId,
+      groupId: message.groupId,
+      senderMemberId: message.senderMemberId,
+      sentAt: message.sentAt,
+      kind: message.kind,
+      text: message.text,
+      mediaRef: message.mediaRef,
+      mentionedMemberIds: message.mentionedMemberIds,
+      quotedMessageId: message.quotedMessageId,
+    }
+  }
+
+  /** 消息上下文（REQ-007「回跳原文」落点）：目标消息 + 同群前后各 8 条；找不到返回 null。 */
+  function messageContextOf(messageId: string): {
+    groupName: string
+    targetId: Id
+    messages: ReturnType<typeof messageDtoOf>[]
+  } | null {
+    const all = readAll('DM-003')
+    const target = all.find((message) => message.messageId === messageId)
+    if (target === undefined) return null
+    const siblings = all
+      .filter((message) => message.groupId === target.groupId)
+      .sort((a, b) => a.sentAt - b.sentAt || (a.messageId < b.messageId ? -1 : 1))
+    const at = siblings.findIndex((message) => message.messageId === messageId)
+    const window = siblings.slice(Math.max(0, at - 8), at + 9)
+    const group = readAll('DM-002').find((entry) => entry.groupId === target.groupId)
+    return {
+      groupName: group?.groupName ?? target.groupId,
+      targetId: messageId,
+      messages: window.map((message) => messageDtoOf(message)),
+    }
+  }
+
   function rosterOf(groupIds?: readonly string[] | null, keyword?: string | null): RosterEntry[] {
     const allow = groupIds !== undefined && groupIds !== null && groupIds.length > 0 ? new Set(groupIds) : null
     const kw = keyword === undefined || keyword === null || keyword.trim().length === 0 ? null : keyword.trim()
@@ -1263,11 +1358,16 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
    * - 指定群 = 批次 scope 限定；提取逐群按全历史窗口重跑该群分片（写入幂等）
    * 不阻塞调用方响应；缺块判定在模块内，重复触发安全。
    */
-  async function runAnalysis(cause: 'ingestDone' | 'manual', groupIds: string[] | null): Promise<void> {
+  async function runAnalysis(
+    cause: 'ingestDone' | 'manual',
+    groupIds: string[] | null,
+    /** `meme` / `extract` 只跑单侧（补算口径）；缺省两侧都跑（§4.5）。 */
+    only: 'meme' | 'extract' | 'both' = 'both',
+  ): Promise<void> {
     const scopeLabel = groupIds === null ? '全部' : `${groupIds.length} 个群`
-    const memeOp = tracker.start({ kind: 'warmup', scope: `梗分析（${scopeLabel}）` })
-    const extractOp = tracker.start({ kind: 'warmup', scope: `信息提取（${scopeLabel}）` })
-    const memeRun = (async () => {
+    const memeOp = only === 'extract' ? '' : tracker.start({ kind: 'warmup', scope: `梗分析（${scopeLabel}）` })
+    const extractOp = only === 'meme' ? '' : tracker.start({ kind: 'warmup', scope: `信息提取（${scopeLabel}）` })
+    const memeRun = only === 'extract' ? Promise.resolve() : (async () => {
       try {
         const handle = meme.startBatch(cause, groupIds === null ? {} : { groupIds })
         tracker.update(memeOp, { state: 'running' })
@@ -1308,7 +1408,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         tracker.update(memeOp, { state: 'failed', error: envelopeOfUnknown(error, 'analysis:meme') })
       }
     })()
-    const extractRun = (async () => {
+    const extractRun = only === 'meme' ? Promise.resolve() : (async () => {
       try {
         tracker.update(extractOp, { state: 'running' })
         const result = groupIds === null ? await extract.run() : await runExtractForGroups(groupIds, extractOp)

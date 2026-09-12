@@ -283,24 +283,30 @@ export class AnalysisOrchestrator {
     const textMessages = messages.filter((message) => typeof message.text === 'string' && message.text.trim().length > 0)
     if (textMessages.length === 0) return []
 
-    // 水位 = 已有出现记录的最大出现时间（无梗时分析窗口内全部消息；不写进度台账，§3.6）
-    let watermark: Timestamp | null = null
+    // 水位按群独立：各群只分析「该群已有出现记录之后」的消息（无梗 / 无记录的群分析全部；
+    // 不写进度台账，§3.6）。旧实现用全局水位 → 多群同跑时后选群的整段历史会被跳过。
+    const watermarkByGroup = new Map<Id, Timestamp>()
     for (const occurrence of occurrences) {
-      watermark = watermark === null ? occurrence.occurredAt : Math.max(watermark, occurrence.occurredAt)
+      const groupId = messagesById.get(occurrence.sourceMessageId)?.groupId
+      if (groupId === undefined) continue
+      const previous = watermarkByGroup.get(groupId)
+      if (previous === undefined || occurrence.occurredAt > previous) watermarkByGroup.set(groupId, occurrence.occurredAt)
     }
-    const pending =
-      memes.length === 0 ? textMessages : textMessages.filter((message) => watermark !== null && message.sentAt > watermark)
-    if (pending.length === 0) return []
+    const groupsWithMemes = new Set<Id>()
+    for (const meme of memes) groupsWithMemes.add(meme.groupId)
 
     const existingByName = new Map<string, Meme>()
     for (const meme of memes) existingByName.set(memeKey(meme.groupId, meme.name), meme)
 
     const byGroup = new Map<Id, RawMessage[]>()
-    for (const message of pending) {
+    for (const message of textMessages) {
+      const watermark = watermarkByGroup.get(message.groupId)
+      if (groupsWithMemes.has(message.groupId) && watermark !== undefined && message.sentAt <= watermark) continue
       const bucket = byGroup.get(message.groupId)
       if (bucket === undefined) byGroup.set(message.groupId, [message])
       else bucket.push(message)
     }
+    if (byGroup.size === 0) return []
 
     const items: TaskItem[] = []
     for (const [groupId, groupMessages] of byGroup) {

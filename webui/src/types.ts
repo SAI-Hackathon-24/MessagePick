@@ -204,6 +204,14 @@ export interface RawMessage {
   quotedMessageId?: string;
 }
 
+/** 消息上下文（REQ-007「回跳原文」）：目标消息 + 同群相邻消息 */
+export interface MessageContext {
+  groupName: string;
+  /** 目标消息标识（渲染时高亮） */
+  targetId: string;
+  messages: RawMessage[];
+}
+
 export type MessageKind = 'text' | 'image' | 'sticker';
 
 export const MESSAGE_KIND_LABEL: Record<MessageKind, string> = {

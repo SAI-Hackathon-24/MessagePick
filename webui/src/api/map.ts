@@ -30,6 +30,7 @@ import type {
   InterestTag,
   LifecycleView,
   MemberInterestHint,
+  MessageContext,
   MessageDetail,
   MyCompatibility,
   PairMatch,
@@ -210,11 +211,64 @@ export const memberNameOf = (memberId: string): string => memberNames.get(member
 export const personNameOf = (personId: string): string => personInfo.get(personId)?.name ?? personId;
 
 // ---------------------------------------------------------------------------
-// 来源引用（REQ-007）：契约只给消息标识；其余展示字段在无逐条读取接口时留空
+// 来源引用（REQ-007）：契约只给消息标识；经非契约 `/api/messages?ids=` 批量解析
+// 时间 / 摘要 / 群名 / 发送者（失败回落为占位，不阻塞渲染）。
 // ---------------------------------------------------------------------------
+interface MessageInfoCacheRow {
+  groupId: string;
+  sentAt: number;
+  senderMemberId: string;
+  text: string | null;
+  mediaRef: string | null;
+}
 
+const messageInfo = new Map<string, MessageInfoCacheRow>();
+
+/** 占位引用（接口不可用 / 消息缺失时的降级；无时间与摘要）。 */
 const refsOf = (messageIds: readonly string[]): SourceRef[] =>
   messageIds.map((messageId) => ({ messageId, groupId: '', groupName: '', senderName: '', sentAt: '', excerpt: '' }));
+
+/** 批量解析消息引用（含时间 / 摘要 / 群名 / 发送者名；结果进程内缓存）。 */
+async function resolveRefs(messageIds: readonly string[]): Promise<SourceRef[]> {
+  const ids = [...new Set(messageIds.filter((id) => id.length > 0))];
+  const missing = ids.filter((id) => !messageInfo.has(id));
+  if (missing.length > 0) {
+    const result = await request<{
+      messages: Array<{
+        messageId: string;
+        groupId: string;
+        senderMemberId: string;
+        sentAt: number;
+        text: string | null;
+        mediaRef: string | null;
+      }>;
+    }>('GET', '/messages', { query: [['ids', missing.join(',')]] }).catch(() => null);
+    if (result !== null && result.ok) {
+      for (const row of result.data.messages) {
+        messageInfo.set(row.messageId, {
+          groupId: row.groupId,
+          sentAt: row.sentAt,
+          senderMemberId: row.senderMemberId,
+          text: row.text,
+          mediaRef: row.mediaRef,
+        });
+      }
+    }
+  }
+  await Promise.all([ensureGroups(), ensureMembers(ids.map((id) => messageInfo.get(id)?.senderMemberId ?? ''))]);
+  return ids.map((id) => {
+    const info = messageInfo.get(id);
+    if (info === undefined) return { messageId: id, groupId: '', groupName: '', senderName: '', sentAt: '', excerpt: '' };
+    return {
+      messageId: id,
+      groupId: info.groupId,
+      groupName: groupNameOf(info.groupId),
+      senderName: memberNameOf(info.senderMemberId),
+      sentAt: iso(info.sentAt),
+      excerpt: info.text ?? '',
+    };
+  });
+}
 
 /** 媒体引用 → 可访问 URL（服务端 `/media/:ref` 按需解密）。 */
 export const mediaUrlOf = (ref: string | null | undefined): string | undefined =>
@@ -400,7 +454,12 @@ interface WireCell {
 
 export async function toMemeUnit(wire: WireCell): Promise<import('@/types').MemeUnit> {
   const kingIds = wire.memeKing.map((row) => row.memberId);
-  await Promise.all([ensureGroups(), ensureMembers(kingIds)]);
+  const [sourceRefs, highlightRefs] = await Promise.all([
+    resolveRefs(wire.sourceMessageIds),
+    resolveRefs(wire.highlights.map((row) => row.messageId)),
+    ensureGroups(),
+    ensureMembers(kingIds),
+  ]);
   const cached = cloudInfo.get(wire.memeId);
   const groupName = groupNameOf(wire.firstSeenGroupId);
   const monthly = Object.entries(wire.monthlyCounts)
@@ -434,17 +493,24 @@ export async function toMemeUnit(wire: WireCell): Promise<import('@/types').Meme
       activeDays: wire.lifecycle.activeDays,
     },
     king: { members, topUsers: members.slice(0, 3).map(({ memberId, name, count }) => ({ memberId, name, count })) },
-    highlights: wire.highlights.map((row) => ({
-      messageId: row.messageId,
-      senderName: '',
-      sentAt: '',
-      kind: (MESSAGE_KIND as Record<string, 'text' | 'image' | 'sticker'>)[row.kind] ?? 'text',
-      groupId: wire.firstSeenGroupId,
-      groupName,
-    })),
+    highlights: wire.highlights.map((row) => {
+      const ref = highlightRefs.find((candidate) => candidate.messageId === row.messageId);
+      const info = messageInfo.get(row.messageId);
+      const mediaUrl = mediaUrlOf(info?.mediaRef ?? null);
+      return {
+        messageId: row.messageId,
+        senderName: ref?.senderName ?? '',
+        sentAt: ref?.sentAt ?? '',
+        kind: (MESSAGE_KIND as Record<string, 'text' | 'image' | 'sticker'>)[row.kind] ?? 'text',
+        groupId: ref?.groupId ?? wire.firstSeenGroupId,
+        groupName: ref?.groupName ?? groupName,
+        ...(info?.text === null || info?.text === undefined ? {} : { text: info.text }),
+        ...(mediaUrl === undefined ? {} : { mediaUrl }),
+      };
+    }),
     variants: wire.variantMemeIds.map((id) => ({ memeId: id, name: cloudInfo.get(id)?.name ?? id })),
     correction: correctionOf.get(wire.memeId) ?? 'none',
-    sourceRefs: refsOf(wire.sourceMessageIds),
+    sourceRefs,
     mine: cached?.mine ?? false,
   };
 }
@@ -658,6 +724,41 @@ export async function toMessageDetail(
         ...(message.quotedMessageId === null ? {} : { quotedMessageId: message.quotedMessageId }),
       })),
     },
+  };
+}
+
+/** 消息上下文（非契约 /api/messages/:id）：目标消息 + 同群相邻消息。 */
+export async function toMessageContext(wire: {
+  groupName: string;
+  targetId: string;
+  messages: Array<{
+    messageId: string;
+    groupId: string;
+    senderMemberId: string;
+    sentAt: number;
+    kind: string;
+    text: string | null;
+    mediaRef: string | null;
+    mentionedMemberIds: string[] | null;
+    quotedMessageId: string | null;
+  }>;
+}): Promise<MessageContext> {
+  await ensureMembers(wire.messages.map((message) => message.senderMemberId));
+  return {
+    groupName: wire.groupName,
+    targetId: wire.targetId,
+    messages: wire.messages.map((message) => ({
+      id: message.messageId,
+      groupId: message.groupId,
+      senderId: message.senderMemberId,
+      senderName: memberNameOf(message.senderMemberId),
+      sentAt: iso(message.sentAt),
+      kind: (MESSAGE_KIND as Record<string, 'text' | 'image' | 'sticker'>)[message.kind] ?? 'text',
+      ...(message.text === null ? {} : { text: message.text }),
+      ...(mediaUrlOf(message.mediaRef) === undefined ? {} : { mediaUrl: mediaUrlOf(message.mediaRef) }),
+      ...(message.mentionedMemberIds === null ? {} : { mentionedIds: message.mentionedMemberIds }),
+      ...(message.quotedMessageId === null ? {} : { quotedMessageId: message.quotedMessageId }),
+    })),
   };
 }
 

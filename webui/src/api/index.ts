@@ -39,6 +39,7 @@ import {
   type MemeContext,
   type MemeUnit,
   type MemberInterestHint,
+  type MessageContext,
   type MessageDetail,
   type MyCompatibility,
   type NewMemeCandidate,
@@ -87,6 +88,7 @@ import {
   toLifecycleView,
   toMemeCloud,
   toMemeUnit,
+  toMessageContext,
   toMessageDetail,
   toMineCloud,
   toMyCompatibility,
@@ -423,6 +425,12 @@ export const api = {
   async messageDetail(id: string): Promise<ApiEnvelope<MessageDetail>> {
     const res = await request<Parameters<typeof toMessageDetail>[0]>('GET', `/extracts/${encodeURIComponent(id)}`);
     return res.ok ? { ok: true, data: await toMessageDetail(res.data, id) } : res;
+  },
+
+  /** 消息上下文（非契约）：REQ-007「回跳原文」——目标消息 + 同群前后各 8 条 */
+  async messageContext(messageId: string): Promise<ApiEnvelope<MessageContext>> {
+    const res = await request<Parameters<typeof toMessageContext>[0]>('GET', `/messages/${encodeURIComponent(messageId)}`);
+    return res.ok ? { ok: true, data: await toMessageContext(res.data) } : res;
   },
 
   /* ================= MOD-007 模块三：社交画像 ================= */
