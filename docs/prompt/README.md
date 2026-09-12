@@ -21,6 +21,19 @@
 | 7b | `generate_detailed_design.md` | `docs/design/impl/high-level-design.md` | `docs/design/impl/detailed-design.md` | 已补全 |
 | 回流 | `update_design_document_prompt.md`（指针）→ `.github/skills/design-doc-change/SKILL.md` | 一条变更请求（改什么 / 为什么 / 期望结果） | 上游文档补丁式更新 + `docs/CHANGELOG.md` 记录 | 已迁移为 skill |
 
+## 编排器（不是阶段生成器）
+
+`run_pipeline.md` 是**编排器**，不出现在上面的阶段表里：它不生成任何设计内容，只负责顺序调度、提问转述与产出核对。
+
+| 它做什么 | 它不做什么 |
+| --- | --- |
+| 按门禁顺序 dispatch 阶段 1–7b（每阶段一个 subagent） | 不生成任何文档内容（那是 `generate_*.md` 的活） |
+| subagent 返回「未闭环」时，用问答工具把问题转述给提出者 | 不代写、不补写、不「顺手修一下」 |
+| 自己打开产出核对状态块 / ID / 上游引用 | 不相信 subagent 的自述 |
+| 最后为每个 `MOD-###` 建骨架并补看板 | 不写模块设计正文（那是负责人的活） |
+
+**为什么它不是 skill**：它属于**正向编排**（人一定在场），不属于需要被自动发现的反向变更。分工判断见 `docs/README.md` §11。
+
 ## 调用顺序
 
 **正向生成**：严格按阶段号递增执行。上一阶段输出状态必须为 `reviewed` 或 `frozen`，否则禁止开跑（`docs/README.md` §6 门禁）。

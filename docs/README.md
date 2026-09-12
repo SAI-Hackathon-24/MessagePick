@@ -55,6 +55,7 @@ docs/
     ├── generate_acceptance_tests.md   #   阶段 6
     ├── generate_high_level_design.md  #   阶段 7a
     ├── generate_detailed_design.md    #   阶段 7b
+    ├── run_pipeline.md                #   编排器：顺序调度阶段 1–7b（非阶段生成器）
     └── update_design_document_prompt.md  # 指针 → .github/skills/design-doc-change/
 ```
 
@@ -307,6 +308,7 @@ stateDiagram-v2
 | `docs/prompt/generate_acceptance_tests.md` | reviewed | 已补全，含 `AC-###` / 覆盖矩阵 / 终态回流 |
 | `docs/prompt/generate_high_level_design.md` | reviewed | 阶段 7a：HLD 生成器；唯一允许技术选型的阶段，选型走「候选 + 推荐 → 人确认」 |
 | `docs/prompt/generate_detailed_design.md` | reviewed | 阶段 7b：详设生成器，展开 HLD 第 5 节的横切关注点 |
+| `docs/prompt/run_pipeline.md` | reviewed | 编排器：按门禁顺序调度阶段 1–7b、转述提问、核对产出，最后建模块骨架；**不产出任何设计内容** |
 | `docs/prompt/update_design_document_prompt.md` | — | 指针文件，指向 skill（流程定义已迁出，见 §11） |
 | `docs/CHANGELOG.md` | — | 变更记录（只追加），已含 CHG-001 – CHG-004 |
 | `docs/design/README.md` | draft | 设计分层导航（契约层 vs 实现层） |
