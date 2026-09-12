@@ -33,6 +33,8 @@ export interface DecodeResult {
   dropped: number
   /** 无法回指本次输入的引用标记数。 */
   unknownRefs: number
+  /** 被丢弃条目的原始引用值样本（诊断用；只含引用值、不含条目其余字段）。 */
+  droppedRefs: string[][]
 }
 
 /** 响应不符合协议（→ `OUTPUT_INVALID`，可自动重试）。 */
@@ -54,6 +56,7 @@ export function decodeResponseText(payload: DecodePayload): DecodeResult {
   const items: DecodedItem[] = []
   let dropped = 0
   let unknownRefs = 0
+  const droppedRefs: string[][] = []
 
   for (const raw of rawItems) {
     if (!isPlainObject(raw)) {
@@ -69,12 +72,13 @@ export function decodeResponseText(payload: DecodePayload): DecodeResult {
     unknownRefs += unknown
     if (ids.length === 0) {
       dropped += 1
+      if (droppedRefs.length < 3) droppedRefs.push(values.slice(0, 8))
       continue
     }
     items.push({ item: raw, refs: ids })
   }
 
-  return { items, dropped, unknownRefs }
+  return { items, dropped, unknownRefs, droppedRefs }
 }
 
 /** 从文本中提取 JSON 对象（容忍 Markdown 代码块与前后杂讯）。 */

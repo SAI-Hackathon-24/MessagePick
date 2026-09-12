@@ -92,13 +92,15 @@ describe('MOD-003 执行任务：分块', () => {
 
     expect(service.calls).toHaveLength(3)
     // 每块只带自己的单元（块边界 = 前 2 / 中 2 / 后 1）
-    expect(service.calls[0]?.messages[1]?.content).toContain('标识: m1')
-    expect(service.calls[0]?.messages[1]?.content).not.toContain('标识: m3')
-    expect(service.calls[1]?.messages[1]?.content).toContain('标识: m3')
-    expect(service.calls[1]?.messages[1]?.content).not.toContain('标识: m5')
-    expect(service.calls[2]?.messages[1]?.content).toContain('标识: m5')
+    expect(service.calls[0]?.messages[1]?.content).toContain('内容 m1')
+    expect(service.calls[0]?.messages[1]?.content).not.toContain('内容 m3')
+    expect(service.calls[1]?.messages[1]?.content).toContain('内容 m3')
+    expect(service.calls[1]?.messages[1]?.content).not.toContain('内容 m5')
+    expect(service.calls[2]?.messages[1]?.content).toContain('内容 m5')
     // 编号全任务唯一：第三块的编号是 5，引用照此回填
     expect(service.calls[2]?.messages[1]?.content).toContain('【输入单元 5】')
+    // 不应把长标识暴露给模型（避免照抄失败导致引用全量丢弃）
+    expect(service.calls[0]?.messages[1]?.content).not.toContain('标识:')
 
     expect(outcome.result.items.map((entry) => entry.label)).toEqual(['a', 'b', 'c', 'd', 'e'])
     expect(outcome.sourceRefs).toEqual(['m1', 'm2', 'm3', 'm4', 'm5'])
@@ -128,9 +130,9 @@ describe('MOD-003 执行任务：输出容错', () => {
     expect(outcome.result.items[0]?.多余字段).toBe('x')
   })
 
-  it('条目带行内标记（[[编号]] / 【消息 标识】）也能回填来源引用', async () => {
+  it('条目带行内标记（[[编号]] / 【消息 标识】 / 【输入单元 编号】）也能回填来源引用', async () => {
     const { engine, service } = createHarness()
-    service.replyItems([{ label: 'a', 备注: '见 [[1]] 与 【消息 m2】' }])
+    service.replyItems([{ label: 'a', 备注: '见 [[1]]、【消息 m2】与【输入单元 1】' }])
 
     const outcome = expectOk(await engine.executeTask(request('识别', messagesInput('m1', 'm2'))))
 
@@ -209,7 +211,9 @@ describe('MOD-003 执行任务：提示词装配', () => {
     expect(messages[0]?.content).not.toContain('只抽取待办事项')
     expect(messages[1]?.content).toContain('业务口径：只抽取待办事项')
     expect(messages[1]?.content).toContain('【输入单元 1】')
-    expect(messages[1]?.content).toContain('标识: m1')
+    expect(messages[1]?.content).toContain('明天交周报')
+    // 只给编号与内容，不暴露长标识（避免模型照抄失败）
+    expect(messages[1]?.content).not.toContain('标识:')
     expect(PROTOCOL_VERSION).toMatch(/^mp-protocol-v\d+$/)
   })
 

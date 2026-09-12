@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 
-import { configureEngine, notifyDataEpoch, shutdownEngine } from '@server/engine'
+import { configureEngine, notifyDataEpoch, setEngineLogger, shutdownEngine } from '@server/engine'
 import { createExtractModule, type ExtractModule } from '@server/extract'
 import { createIngestModule, type IngestModule } from '@server/ingest'
 import { createMemeModule, type MemeModule } from '@server/meme'
@@ -381,6 +381,11 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   }
 
   applyEngineConfig(config)
+
+  // 引擎日志接线（详设 §6.1：日志格式与落点由外壳决定；条目名加 `engine.` 前缀）
+  setEngineLogger((entry) => {
+    logger[entry.level](`engine.${entry.event}`, entry.fields)
+  })
 
   const boundPort = { value: options.port ?? config.server.port }
   const requestIds = new WeakMap<object, string>()
@@ -1207,6 +1212,17 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         tracker.update(memeOp, { state: 'running' })
         const result = await handle.done
         const done = result.items.filter((item) => item.status === 'succeeded').length
+        const failedItems = result.items.filter((item) => item.status === 'failed')
+        if (failedItems.length > 0) {
+          const first = failedItems[0]
+          logger.warn('warmup.meme.failures', {
+            count: failedItems.length,
+            itemId: first?.itemId,
+            code: first?.error?.code,
+            message: first?.error?.message,
+            scope: first?.error?.scope,
+          })
+        }
         tracker.update(memeOp, {
           state: result.status === 'succeeded' ? 'succeeded' : result.status === 'failed' && done === 0 ? 'failed' : 'partial',
           counts: { done, total: result.items.length },
@@ -1227,7 +1243,15 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
             ? { error: envelopeOfUnknown(new Error(`信息提取有 ${result.failures.length} 个失败分片`), 'warmup:extract') }
             : {}),
         })
-        if (result.failures.length > 0) logger.warn('warmup.extract.failures', { count: result.failures.length })
+        if (result.failures.length > 0) {
+          const first = result.failures[0]
+          logger.warn('warmup.extract.failures', {
+            count: result.failures.length,
+            group: first?.group,
+            code: first?.code,
+            reason: first?.reason,
+          })
+        }
       } catch (error) {
         tracker.update(extractOp, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:extract') })
       }

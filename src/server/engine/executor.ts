@@ -338,6 +338,15 @@ export class Engine {
         chunk.failureReason = null
         try {
           const decoded = await this.#executeChunkWithRetry(record, chunk)
+          if (decoded.dropped > 0 || decoded.unknownRefs > 0) {
+            this.#log('warn', 'task.decode.refs', {
+              taskRef: record.taskRef,
+              taskType: record.taskType,
+              dropped: decoded.dropped,
+              unknownRefs: decoded.unknownRefs,
+              refSamples: decoded.droppedRefs.slice(0, 2),
+            })
+          }
           chunk.items = decoded.items.map((entry) => entry.item)
           chunk.refs = [...new Set(decoded.items.flatMap((entry) => entry.refs))]
           chunk.dropped = decoded.dropped

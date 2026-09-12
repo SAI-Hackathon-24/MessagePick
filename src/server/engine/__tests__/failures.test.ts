@@ -200,10 +200,10 @@ describe('MOD-003 重试（API-008）', () => {
     expect(second.sourceRefs).toEqual(['m1', 'm2', 'm3'])
     expect(service.calls).toHaveLength(4)
     // 块 1（m1）只被调用过一次
-    const chunkOneCalls = service.calls.filter((call) => call.messages[1]?.content.includes('标识: m1'))
+    const chunkOneCalls = service.calls.filter((call) => call.messages[1]?.content.includes('内容 m1'))
     expect(chunkOneCalls).toHaveLength(1)
-    expect(service.calls[2]?.messages[1]?.content).toContain('标识: m2')
-    expect(service.calls[3]?.messages[1]?.content).toContain('标识: m3')
+    expect(service.calls[2]?.messages[1]?.content).toContain('内容 m2')
+    expect(service.calls[3]?.messages[1]?.content).toContain('内容 m3')
   })
 
   it('重试结果与首次同构，且可对重试返回的新引用再次重试（成功缓存复用）', async () => {

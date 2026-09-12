@@ -19,7 +19,7 @@ const REF_FIELD_NAMES = new Set(['sourcerefs', 'source_refs', 'sourcereference',
 
 const MARKER_PATTERNS: readonly RegExp[] = [
   /\[\[([^[\]\n]{1,120})\]\]/g,
-  /[\[【(（]\s*(?:消息|msg|message|ref|source|来源)\s*[:：]?\s*([^\]】)）\n]{1,64}?)\s*[\]】)）]/gi,
+  /[\[【(（]\s*(?:消息|msg|message|ref|source|来源|输入单元|单元)\s*[:：]?\s*([^\]】)）\n]{1,64}?)\s*[\]】)）]/gi,
 ]
 
 /** 从条目提取原始引用写法（字段优先；缺字段时扫描字符串值中的行内标记）。 */
@@ -109,8 +109,9 @@ function scanMarkers(text: string): string[] {
 
 function normalizeToken(raw: string): string {
   let token = raw.trim()
-  // 去掉可能残留的包裹符与「消息」前缀（如 "[[3]]" / "【消息 3】" / "来源: 3"）。
+  // 去掉可能残留的包裹符与「消息」/「输入单元」前缀（如 "[[3]]" / "【消息 3】" / "输入单元 3"）。
   token = token.replace(/^[\[【(（]+/, '').replace(/[\]】)）]+$/, '').trim()
   token = token.replace(/^(?:消息|msg|message|ref|source|来源)\s*[:：]?\s*/i, '').trim()
+  token = token.replace(/^(?:输入单元|单元|unit)\s*[:：#]?\s*/i, '').trim()
   return token
 }
