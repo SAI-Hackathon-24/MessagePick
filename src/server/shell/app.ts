@@ -541,6 +541,40 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
+  /**
+   * 按需触发分析（非契约接口；写令牌守卫）。
+   *
+   * 产品口径：分析要对每个群逐人调用模型（实测上千次、以十分钟计），
+   * 因此**不随采集自动全量开跑**，而是由使用者在界面上选定群后显式触发。
+   * 与 `POST /api/update` 的区别：本接口**不做采集**，只跑分析，
+   * 用于「数据已经采过了，我现在想看这几个群」这一最常见的情形。
+   *
+   * 入参：`{ groupIds?: string[] }` —— 省略或空数组 = 分析全部群。
+   * 语义：立即返回 202，后台执行；进度经 `GET /api/operations` 与 `/api/events` 可见。
+   */
+  app.post(
+    '/api/analyze',
+    ...writeGuard,
+    handle('analyze', (req, res) => {
+      const payload = optionalBody(req, 'analyze')
+      const raw = payload['groupIds']
+      if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
+        throw invalidInput('groupIds 需为字符串数组', 'analyze')
+      }
+      const groupIds: Id[] | null =
+        raw === undefined || raw === null || raw.length === 0
+          ? null
+          : [...new Set(raw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter((v) => v.length > 0))]
+      if (tracker.hasActive('warmup')) {
+        res.status(GATE_STATUS).json(failure(metaOf(req), shellEnvelope('INVALID_INPUT', '已有分析正在进行', 'analyze')))
+        return
+      }
+      // 不 await：分析可能跑很久，接口立即返回；状态经操作快照可见
+      void runWarmup(groupIds, 'manual')
+      res.status(202).json(success(metaOf(req), { started: true, groups: groupIds === null ? '全部' : groupIds.length }))
+    }),
+  )
+
   // API-005 删除预检（编排：不登记操作、不阻断更新）
   app.post(
     '/api/deletions/preflight',
@@ -1085,24 +1119,21 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
    * MOD-007 无入参取数预热；MOD-008 不参与后台预热。
    * 每模块一条 `kind='warmup'` 操作；预热失败**不阻塞** update 响应。
    */
-  async function runWarmup(): Promise<void> {
-    if (!config.ingest.autoTriggerAfterIngest) return
-
-    const analysisGroupIds = config.ingest.analysisGroupIds
-    if (analysisGroupIds.length === 0) {
+  async function runWarmup(groupIds: readonly Id[] | null, cause: 'ingestDone' | 'manual' = 'ingestDone'): Promise<void> {
+    if (groupIds !== null && groupIds.length === 0) {
       logger.info('warmup.skipped', { module: 'MOD-004', reason: '未选择待分析群', scope: 'MOD-005/006/007' })
       return
     }
-    /** 传给模块的群范围（`ScopeFilter` = `SharedFilter`）；空数组等于不限，故此处必然非空。 */
-    const scope: SharedFilter = { groupIds: [...analysisGroupIds] }
-    logger.info('warmup.scope', { module: 'MOD-004', groups: analysisGroupIds.length })
+    /** 传给模块的群范围（`ScopeFilter` = `SharedFilter`）；`null` = 全部群。 */
+    const scope: SharedFilter | null = groupIds === null ? null : { groupIds: [...groupIds] }
+    logger.info('warmup.scope', { module: 'MOD-004', groups: groupIds === null ? '全部' : groupIds.length })
 
     // MOD-005：后台批量生成梗（仅选定群）；等待批次结束以便统计成功/失败明细
     const memeRun = (async () => {
       const id = tracker.start({ kind: 'warmup', scope: '梗分析' })
       tracker.update(id, { state: 'running' })
       try {
-        const handle = meme.startBatch('ingestDone', scope)
+        const handle = meme.startBatch(cause, scope ?? undefined)
         const result = await handle.done
         const done = result.items.filter((item) => item.status === 'succeeded').length
         const failedItems = result.items.filter((item) => item.status === 'failed')
@@ -1133,20 +1164,31 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       const id = tracker.start({ kind: 'warmup', scope: '信息提取' })
       tracker.update(id, { state: 'running' })
       try {
-        const result = await extract.run()
-        const done = result.failures.length === 0 ? 1 : 0
-        if (result.failures.length > 0) {
-          const first = result.failures[0]
+        /**
+         * 按群分析时**逐群重跑全历史**（`retry({ groupId, window: 全历史 })`）：
+         * 水位窗口是全局的，无法表达「只看这一个群」；而按群重跑能把老群补上。
+         * 不指定群时仍走原水位窗口 `run()`。
+         */
+        const results =
+          groupIds === null
+            ? [await extract.run()]
+            : await Promise.all(
+                groupIds.map((groupId) => extract.retry({ groupId, window: { from: 0, to: clock() } })),
+              )
+        const failures = results.flatMap((result) => result.failures)
+        const done = results.filter((result) => result.status === 'succeeded').length
+        if (failures.length > 0) {
+          const first = failures[0]
           logger.warn('warmup.extract.failures', {
-            count: result.failures.length,
+            count: failures.length,
             group: first?.group,
             code: first?.code,
             reason: first?.reason,
           })
         }
         tracker.update(id, {
-          state: result.status === 'succeeded' ? 'succeeded' : 'partial',
-          counts: { done, total: 1 },
+          state: failures.length === 0 ? 'succeeded' : done > 0 ? 'partial' : 'failed',
+          counts: { done, total: results.length },
         })
       } catch (error) {
         tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:extract') })
@@ -1211,7 +1253,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         notifyDataEpoch(currentEpoch(store))
         if (outcome.ok) {
           // 预热（§4.5）：后台发起，不阻塞本次响应；失败只收敛 warmup 操作状态
-          runWarmup()
+          runWarmup(config.ingest.analysisGroupIds, 'ingestDone')
         }
         if (outcome.ok) {
           res.json(success(metaOf(req), outcome.data))

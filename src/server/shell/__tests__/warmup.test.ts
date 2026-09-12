@@ -65,6 +65,15 @@ const fakeExtract = {
     if (failWarmup) throw new Error('抽取预热失败（替身）')
     return { batchId: 'b1', status: 'succeeded', failures: [] }
   },
+  /**
+   * 按群分析走 `retry({ groupId, window: 全历史 })`（逐群重跑），
+   * 因为水位窗口是全局的、无法表达「只看这一个群」。
+   */
+  retry: async (scope: unknown) => {
+    calls.extractRun.push(scope)
+    if (failWarmup) throw new Error('抽取预热失败（替身）')
+    return { batchId: 'b1', status: 'succeeded', failures: [] }
+  },
   queryEntries: async () => ({ items: [], pageInfo: { page: 1, pageSize: 50, total: 0 }, truncated: false }),
   queryNotifications: async () => ({ groups: [], pageInfo: { page: 1, pageSize: 50, total: 0 }, truncated: false }),
   queryDueTodos: async () => ({ todos: [], total: 0, truncated: false }),
@@ -191,18 +200,20 @@ describe('采集完成后的预热（§4.5）', () => {
 
     // MOD-005：后台批量生成梗，cause 必须是 'ingestDone'，且**只针对选定的群**
     expect(calls.startBatch.length).toBeGreaterThan(0)
-    expect(calls.startBatch[0]).toMatchObject({ cause: 'ingestDone' })
+    expect(calls.startBatch[0]).toMatchObject({ cause: 'ingestDone' }) // 采集后自动分析
     expect((calls.startBatch[0] as { scope?: { groupIds?: string[] } }).scope?.groupIds).toEqual([
       'g1@chatroom',
       'g2@chatroom',
     ])
 
     /**
-     * MOD-006：**不带窗口**调用，窗口由该模块按自己的增量水位推导。
-     * 曾传 `{from: completedAt, to: completedAt}`（宽度 0）→ 首次抽取永远扫不到数据。
+     * MOD-006：选了群时**逐群重跑全历史**（`retry({ groupId, window })`），
+     * 每个选定群一次；不选群时才走不带窗口的 `run()`（窗口按增量水位推导）。
+     * 注意：自造零宽窗口 `{from: now, to: now}` 会让首次抽取永远扫不到数据。
      */
-    expect(calls.extractRun.length).toBeGreaterThan(0)
-    expect(calls.extractRun[0]).toBeUndefined()
+    expect(calls.extractRun.length).toBe(2)
+    expect((calls.extractRun[0] as { groupId?: string }).groupId).toBe('g1@chatroom')
+    expect((calls.extractRun[1] as { groupId?: string }).groupId).toBe('g2@chatroom')
 
     // MOD-007：无入参取数预热
     expect(calls.fit).toBeGreaterThan(0)
