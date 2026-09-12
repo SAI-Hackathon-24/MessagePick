@@ -1270,6 +1270,8 @@ function applyEngineConfig(config: ShellConfig): void {
     model: {
       baseUrl: config.model.baseUrl,
       apiKey: config.model.apiKey,
+      // ⚠️ 此前漏传 `name`：引擎侧始终是空串，模型调用必然抛「未配置模型名」
+      name: config.model.name,
       taskConcurrency: config.model.taskConcurrency,
     },
     timeouts: { modelCallMs: config.timeouts.modelCallMs },
@@ -1430,6 +1432,7 @@ function settingsPatchOf(req: Request): SettingsPatch {
     const next: NonNullable<SettingsPatch['model']> = {}
     if (model['baseUrl'] !== undefined) next.baseUrl = bodyString(model, 'baseUrl', scope) ?? ''
     if (model['apiKey'] !== undefined) next.apiKey = bodyString(model, 'apiKey', scope) ?? ''
+    if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
     const concurrency = bodyInt(model, 'taskConcurrency', scope)
     if (concurrency !== null) {
       if (concurrency < 1 || concurrency > 8) {
@@ -1464,6 +1467,7 @@ function settingsPatchOf(req: Request): SettingsPatch {
 function applySettings(config: ShellConfig, patch: SettingsPatch): void {
   if (patch.model?.baseUrl !== undefined) config.model.baseUrl = patch.model.baseUrl
   if (patch.model?.apiKey !== undefined) config.model.apiKey = patch.model.apiKey
+  if (patch.model?.name !== undefined) config.model.name = patch.model.name
   if (patch.model?.taskConcurrency !== undefined) config.model.taskConcurrency = patch.model.taskConcurrency
   if (patch.ingest?.autoTriggerAfterIngest !== undefined) {
     config.ingest.autoTriggerAfterIngest = patch.ingest.autoTriggerAfterIngest

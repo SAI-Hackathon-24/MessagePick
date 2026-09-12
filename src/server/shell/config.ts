@@ -27,6 +27,13 @@ export interface ShellConfig {
     baseUrl: string
     /** 模型凭据；只写不读回（详设 §4.3） */
     apiKey: string
+    /**
+     * 模型名（决策 8 的 `model.name`；空 = 未配置）。
+     * ⚠️ 该字段此前**只存在于引擎配置**（`EngineConfig.model.name`），未进入外壳配置，
+     * 也没有任何写入路径；而模型客户端要求它非空（空即抛「未配置模型名」），
+     * 导致整条分析链路在门口失败。此处补齐为可配置项。
+     */
+    name: string
     /** 模型任务并发上限（1–8） */
     taskConcurrency: number
   }
@@ -68,7 +75,7 @@ export interface ShellConfig {
 
 /** 默认值（详设 §7 表格的「默认值」列，逐项对应）。 */
 export const DEFAULT_CONFIG: ShellConfig = {
-  model: { baseUrl: '', apiKey: '', taskConcurrency: 4 },
+  model: { baseUrl: '', apiKey: '', name: '', taskConcurrency: 4 },
   cli: { executable: '', stateDir: '' },
   server: { port: 0 },
   timeouts: { cliCommandMs: 120_000, modelCallMs: 90_000, renderMs: 30_000 },
@@ -79,7 +86,7 @@ export const DEFAULT_CONFIG: ShellConfig = {
 
 /** 可提交的设置补丁（只含使用者可改项；页面 `SettingsPatch` 的同源结构）。 */
 export interface SettingsPatch {
-  model?: { baseUrl?: string; apiKey?: string; taskConcurrency?: number }
+  model?: { baseUrl?: string; apiKey?: string; name?: string; taskConcurrency?: number }
   ingest?: { autoTriggerAfterIngest?: boolean }
   log?: { level?: ShellLogLevel }
 }
@@ -184,6 +191,7 @@ export function normalizeConfig(raw: unknown): { config: ShellConfig; issues: st
       model: {
         baseUrl: stringValue(model['baseUrl'], DEFAULT_CONFIG.model.baseUrl, 'model.baseUrl', issues),
         apiKey: stringValue(model['apiKey'], DEFAULT_CONFIG.model.apiKey, 'model.apiKey', issues),
+        name: stringValue(model['name'], DEFAULT_CONFIG.model.name, 'model.name', issues),
         taskConcurrency: intValue(
           model['taskConcurrency'],
           DEFAULT_CONFIG.model.taskConcurrency,
@@ -293,7 +301,7 @@ export function saveConfig(dataDir: string, config: ShellConfig): void {
 
 /** 设置页只读视图（凭据只给「是否已配置」；详设 §4.3）。 */
 export interface SettingsView {
-  model: { baseUrl: string; apiKeyConfigured: boolean; taskConcurrency: number }
+  model: { baseUrl: string; apiKeyConfigured: boolean; name: string; taskConcurrency: number }
   ingest: { autoTriggerAfterIngest: boolean; pageSize: number }
   cli: { executable: string; stateDir: string }
   server: { port: number }
@@ -308,6 +316,7 @@ export function settingsViewOf(config: ShellConfig): SettingsView {
     model: {
       baseUrl: config.model.baseUrl,
       apiKeyConfigured: config.model.apiKey.length > 0,
+      name: config.model.name,
       taskConcurrency: config.model.taskConcurrency,
     },
     ingest: { autoTriggerAfterIngest: config.ingest.autoTriggerAfterIngest, pageSize: config.ingest.pageSize },
@@ -344,6 +353,10 @@ export function applySettingsPatch(config: ShellConfig, patch: SettingsPatch): P
     if (patch.model.apiKey !== undefined && patch.model.apiKey !== next.model.apiKey) {
       next.model.apiKey = patch.model.apiKey
       changed.push('model.apiKey')
+    }
+    if (patch.model.name !== undefined && patch.model.name !== next.model.name) {
+      next.model.name = patch.model.name
+      changed.push('model.name')
     }
     if (patch.model.taskConcurrency !== undefined && patch.model.taskConcurrency !== next.model.taskConcurrency) {
       next.model.taskConcurrency = patch.model.taskConcurrency
