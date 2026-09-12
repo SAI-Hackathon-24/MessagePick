@@ -231,7 +231,7 @@ export const api = {
 
   /** 群列表（DM-002）：全局筛选条的群多选项（REQ-004） */
   async groups(): Promise<ApiEnvelope<Group[]>> {
-    const res = await request<{ records: Array<{ groupId: string; groupName: string }> }>('GET', '/filter-options/groups', {
+    const res = await request<{ records: Array<{ groupId: string; groupName: string; messageCount?: number; lastMessageAt?: number | null }> }>('GET', '/filter-options/groups', {
       query: [
         ['page', '1'],
         ['pageSize', '1000'],

@@ -310,9 +310,21 @@ export function toUpdateResult(wire: {
 }
 
 /** 群清单 → 筛选条群多选项（并写入展示名缓存）。 */
-export function toGroups(records: Array<{ groupId: string; groupName: string }>): Group[] {
+export function toGroups(
+  records: Array<{ groupId: string; groupName: string; messageCount?: number; lastMessageAt?: number | null }>,
+): Group[] {
   for (const row of records) groupNames.set(row.groupId, row.groupName);
-  return records.map((row) => ({ id: row.groupId, name: row.groupName }));
+  /*
+   * ⚠️ 必须透传活跃度派生字段：服务端已在群清单里给出 `messageCount` / `lastMessageAt`
+   * 并按最近活跃排序，但这里若只取 id/name，界面上的「待分析群」会**恒显示 0 条消息**
+   * （`Group` 类型声明了这两个字段，缺了就会被当成 undefined → 显示 0）。
+   */
+  return records.map((row) => ({
+    id: row.groupId,
+    name: row.groupName,
+    messageCount: row.messageCount ?? 0,
+    lastMessageAt: row.lastMessageAt ?? null,
+  }));
 }
 
 const ENTITY_LABEL: Record<string, string> = {
@@ -550,9 +562,21 @@ function extractItemOf(view: WireExtractView): ExtractItem {
     groupId: view.groupId,
     groupName: groupNameOf(view.groupId),
     sentAt: iso(view.time),
-    // —— 契约 `API-014` 视图未含的展示字段：留空 / 默认（不伪造；详见 webui/README.md 的降级清单）
-    summaryLine: '',
+    /*
+     * 卡片主行必须显示**真实内容**。
+     *
+     * ⚠️ `API-014`（提取条目列表）的出参只有
+     * `{ entryId, recognitionType, timeElement, locationElement, personElementMemberIds,
+     *    subjectElement, deadline, groupId, time, topic, sourceMessageIds }`，
+     * **没有** `summaryLine` / `aiSummary`（那两件在 `API-015` 通知视图里）。
+     * 之前这里把 `summaryLine` 置空，界面上卡片主行就是一片空白 ——
+     * 看起来像「哪里都没有正确内容展示」，其实内容一直在 `subjectElement` 里。
+     * 现在按可用字段拼出主行：`主题 · 要素`（要素取 subjectElement，缺失时回落 topic）。
+     */
+    summaryLine: [view.topic, view.subjectElement].filter((v) => v !== null && v !== '').join(' · '),
+    // `API-014` 确实不提供 AI 摘要，留空并如实呈现（不伪造）
     aiSummary: '',
+    // 优先级与待办状态只在 `API-015`（通知视图）出参里；列表视图给中性默认，见 README 降级清单
     priority: 'medium',
     todoState: 'pending',
     remindState: 'no_remind',
