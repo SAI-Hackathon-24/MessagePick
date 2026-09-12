@@ -5,14 +5,14 @@
  * 正文　：AI 总结 + 所有来源群消息（每条可回跳原文 —— REQ-007）
  * 附加　：消息涉及成员的**内联兴趣提示**（REQ-070；只含已确认数据，无数据时不显示提示）
  */
-import { ExternalLink, MessageSquareText, Sparkles, Users } from 'lucide-react';
+import { MessageSquareText, Sparkles, Users } from 'lucide-react';
 import { useEffect } from 'react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
 import { fmtMD, fmtDayLabel } from '@/lib/format';
 import { EXTRACT_TYPE_LABEL } from '@/types';
-import { Avatar, Badge, Card, CardHeader, Drawer, ErrorState, LoadingState, NoticeBar, SectionHeading } from '@/components/ui';
+import { Avatar, Badge, Card, CardHeader, Drawer, ErrorState, LoadingState, SectionHeading } from '@/components/ui';
 import { MessageBubble } from './MessageBubble';
 
 export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; open: boolean; onClose: () => void }) {
@@ -71,7 +71,7 @@ export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; 
           {/* 内联兴趣提示（REQ-070）：仅已确认数据；无数据时不显示 */}
           {(hints.data ?? []).some((h) => h.interests.length > 0 || h.unknown) && (
             <Card>
-              <CardHeader title="涉及成员的兴趣提示" icon={Users} subtitle="只显示已确认的兴趣标签；发言不足的成员标注「未知」，不做推测" />
+              <CardHeader title="涉及成员的兴趣提示" icon={Users} subtitle="只显示兴趣标签；发言不足的成员标注「未知」，不做推测" />
               <ul className="space-y-2 px-4 py-3.5">
                 {(hints.data ?? []).map((h) => (
                   <li key={h.memberId} className="flex flex-wrap items-center gap-2">
@@ -103,13 +103,6 @@ export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; 
               ))}
             </ol>
           </section>
-
-          <NoticeBar tone="sky" className="flex items-start gap-2">
-            <ExternalLink size={13} className="mt-0.5 shrink-0" />
-            <span>
-              点任意「回原文」可跳到该条原始消息所在的上下文（首现、最近调用、精华消息与梗王统计同样都带来源 —— REQ-007）。
-            </span>
-          </NoticeBar>
 
           <div className="mp-meta flex items-center gap-2">
             <MessageSquareText size={12} />

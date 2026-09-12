@@ -11,11 +11,10 @@ import { useEffect, useRef, useState } from 'react';
 import { CalendarRange, Check, ChevronDown, Layers, Search, UserRound, X } from 'lucide-react';
 import { useAppState } from '@/state/appState';
 import { cn } from '@/lib/cn';
-import { KEYWORD_SCOPE } from '@/types';
-import { Badge, Chip } from '@/components/ui';
+import { Chip } from '@/components/ui';
 
 export function GlobalFilterBar({ meName }: { meName?: string }) {
-  const { filter, setFilter, clearFilter, groups, setModule } = useAppState();
+  const { filter, setFilter, clearFilter, groups } = useAppState();
   const [openGroups, setOpenGroups] = useState(false);
   const [openTime, setOpenTime] = useState(false);
   const groupRef = useRef<HTMLDivElement>(null);
@@ -152,7 +151,7 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
           data-testid="filter-keyword"
           value={filter.keyword}
           onChange={(e) => setFilter({ keyword: e.target.value })}
-          placeholder={`关键词（匹配${KEYWORD_SCOPE[filter.module]}）`}
+          placeholder="关键词"
           className="w-[190px] rounded-xl border border-ink-900/[0.08] bg-white/80 py-1.5 pl-8 pr-7 text-xs text-ink-700 outline-none transition-all placeholder:text-ink-300 focus:w-[240px] focus:border-jade-500/50 focus:ring-2 focus:ring-jade-500/12"
         />
         {filter.keyword && (
@@ -174,12 +173,6 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         </Chip>
       )}
 
-      {/* 模块内不得出现第二组同类筛选控件，因此把当前模块的匹配口径显式标注出来 */}
-      <Badge tone="neutral" className="hidden xl:inline-flex">
-        <button type="button" onClick={() => setModule(filter.module)} className="cursor-default">
-          关键词匹配：{KEYWORD_SCOPE[filter.module]}
-        </button>
-      </Badge>
     </div>
   );
 }

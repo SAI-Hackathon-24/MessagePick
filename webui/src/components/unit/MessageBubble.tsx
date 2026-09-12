@@ -1,5 +1,5 @@
 /** 群消息气泡：文字 / 图片 / 表情包三类（DM-003），支持回跳原文 */
-import { ExternalLink, Image as ImageIcon, Smile } from 'lucide-react';
+import { Image as ImageIcon, Smile } from 'lucide-react';
 import { fmtMD } from '@/lib/format';
 import { MESSAGE_KIND_LABEL, type RawMessage } from '@/types';
 import { Avatar, Badge } from '@/components/ui';
@@ -18,9 +18,7 @@ export function MessageBubble({ message, showGroup = true }: { message: RawMessa
             {Icon && <Icon size={10} />}
             {MESSAGE_KIND_LABEL[message.kind]}
           </Badge>
-          <button type="button" className="ml-auto inline-flex items-center gap-1 text-[11px] text-jade-700 hover:underline" title="回到该消息所在的上下文">
-            <ExternalLink size={10} /> 回原文
-          </button>
+
         </div>
         {message.kind === 'text' ? (
           <p className="mt-1 text-[13px] leading-relaxed text-ink-700">{message.text}</p>

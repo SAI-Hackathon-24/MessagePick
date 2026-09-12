@@ -28,7 +28,7 @@ import {
   type Priority,
   type TodoState,
 } from '@/types';
-import { Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
+import { Badge, Card, CardHeader, Chip, DdlBadge, EmptyState, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 import { MessageDetailDrawer } from '@/components/unit/MessageDetailDrawer';
 
@@ -114,10 +114,10 @@ export default function ExtractPage() {
         {/* 四张卡都可点：点一下只看该类条目，再点取消（用户反馈 6） */}
         {(
           [
-            { key: 'all' as const, label: '提取条目', value: num(timeline.data?.total ?? 0), unit: '条', hint: '点一下只看全部条目', icon: MessageSquareText, tone: 'jade' as const },
-            { key: 'pending' as const, label: '待处理', value: stats.pending, unit: '条', hint: '点一下只看未处理的', icon: CheckCheck, tone: 'amber' as const },
-            { key: 'high' as const, label: '优先级高', value: stats.high, unit: '条', hint: '点一下只看优先级高的', icon: ListFilter, tone: 'coral' as const },
-            { key: 'deadline' as const, label: '带 DDL', value: stats.withDdl, unit: '条', hint: '点一下只看带截止日期的', icon: AlarmClock, tone: 'ink' as const },
+            { key: 'all' as const, label: '提取条目', value: num(timeline.data?.total ?? 0), unit: '条', hint: '点一下展开全部条目', icon: MessageSquareText, tone: 'jade' as const },
+            { key: 'pending' as const, label: '待处理', value: stats.pending, unit: '条', hint: '点一下筛选未处理的', icon: CheckCheck, tone: 'amber' as const },
+            { key: 'high' as const, label: '优先级高', value: stats.high, unit: '条', hint: '点一下筛选优先级高的', icon: ListFilter, tone: 'coral' as const },
+            { key: 'deadline' as const, label: '带 DDL', value: stats.withDdl, unit: '条', hint: '点一下筛选带截止日期的', icon: AlarmClock, tone: 'ink' as const },
           ]
         ).map((c) => (
           <button
@@ -139,8 +139,11 @@ export default function ExtractPage() {
           <AlarmClock size={14} className="shrink-0" />
           <span className="font-medium">距到期不足 1 天且未处理：</span>
           {(due.data ?? []).map((t) => (
-            <span key={t.id} className="rounded-lg bg-white/70 px-2 py-0.5 text-[11.5px]">
-              {t.subject} · {t.groupName} · {fmtMD(t.deadline)}
+            <span key={t.id} className="inline-flex flex-wrap items-center gap-2 rounded-lg bg-white/70 px-2 py-1">
+              <span className="text-[12px] font-medium text-ink-700">
+                {t.subject} · {t.groupName}
+              </span>
+              <DdlBadge deadline={t.deadline} hint={deadlineHint(t.deadline)} />
             </span>
           ))}
           <span className="mp-meta">（提醒只在应用打开时检查，不做后台常驻）</span>
@@ -198,7 +201,7 @@ export default function ExtractPage() {
                         {it.elements.deadline ? ` · DDL ${fmtMD(it.elements.deadline)}` : ' · 无 DDL'}
                       </span>
                     </button>
-                    {dl && <Badge tone={dl.overdue ? 'neutral' : dl.urgent ? 'coral' : 'jade'}>{dl.text}</Badge>}
+                    <DdlBadge deadline={it.elements.deadline} hint={dl} />
                     <Badge tone={PRIORITY_TONE[it.priority]}>优先级 {PRIORITY_LABEL[it.priority]}</Badge>
                     <Button size="sm" variant="outline" icon={Check} onClick={() => void markTodo(it.id, 'done')}>
                       完成
@@ -221,8 +224,9 @@ export default function ExtractPage() {
       )}
 
       {pageView !== 'todo' && (
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        {/* ---------------- 消息时间轴（REQ-047） ---------------- */}
+      <div className={pageView === 'notices' ? 'grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]' : 'grid gap-5'}>
+        {/* ---------------- 消息时间轴（REQ-047）：仅在「消息时间轴」子页渲染 ---------------- */}
+        {pageView === 'timeline' && (
         <section className="min-w-0">
           <SectionHeading
             title="消息时间轴"
@@ -267,6 +271,7 @@ export default function ExtractPage() {
             </div>
           )}
         </section>
+        )}
 
         {/* ---------------- 通知总览（按维度分组 —— REQ-045）：仅在通知总览视图显示 ---------------- */}
         {pageView === 'notices' && (
@@ -279,7 +284,14 @@ export default function ExtractPage() {
               ) : groups.error ? (
                 <ErrorState error={groups.error} onRetry={groups.refetch} onClearFilter={clearFilter} className="!py-4" />
               ) : (
-                (groups.data ?? []).map((g) => (
+                (dimension === 'priority'
+                  ? // 固定顺序：高 → 中 → 低（评审建议 4）
+                    [...(groups.data ?? [])].sort((a, b) => {
+                      const order = { high: 0, medium: 1, low: 2 } as Record<string, number>;
+                      return (order[a.key] ?? 9) - (order[b.key] ?? 9);
+                    })
+                  : (groups.data ?? [])
+                ).map((g) => (
                   <div key={g.key}>
                     <div className="mb-1.5 flex items-center justify-between">
                       <span className="text-xs font-semibold text-ink-700">
@@ -287,7 +299,15 @@ export default function ExtractPage() {
                       </span>
                       <Badge tone="neutral">{g.items.length}</Badge>
                     </div>
-                    <NoticeGroupList items={g.items} onOpen={setDetailId} />
+                    <NoticeGroupList
+                      items={
+                        // 按优先级浏览时，组内按 DDL 升序（评审建议 4）
+                        dimension === 'priority'
+                          ? [...g.items].sort((a, b) => (a.elements.deadline ?? '9999').localeCompare(b.elements.deadline ?? '9999'))
+                          : g.items
+                      }
+                      onOpen={setDetailId}
+                    />
                   </div>
                 ))
               )}
@@ -345,7 +365,7 @@ function ExtractCard({
         <Badge tone="neutral">{EXTRACT_TYPE_LABEL[item.type]}</Badge>
         <Badge tone={PRIORITY_TONE[item.priority]}>优先级 {PRIORITY_LABEL[item.priority]}</Badge>
         <Badge tone={TODO_TONE[item.todoState]}>{TODO_STATE_LABEL[item.todoState]}</Badge>
-        {dl && <Badge tone={dl.overdue ? 'neutral' : dl.urgent ? 'coral' : 'jade'}>{dl.text}</Badge>}
+        <DdlBadge deadline={item.elements.deadline} hint={dl} />
         {item.remindState === 'remind' && <Badge tone="coral">即将到期</Badge>}
       </div>
 
@@ -356,7 +376,7 @@ function ExtractCard({
         {item.elements.time && <span className="mp-meta">时间：{fmtMD(item.elements.time)}</span>}
         {item.elements.location && <span className="mp-meta">地点：{item.elements.location}</span>}
         {item.elements.people?.length ? <span className="mp-meta">人物：{item.elements.people.map((p) => p.name).join('、')}</span> : null}
-        {item.elements.deadline && <span className="mp-meta">DDL：{fmtMD(item.elements.deadline)}</span>}
+        {item.elements.deadline && <DdlBadge deadline={item.elements.deadline} hint={dl} />}
         <span className="mp-meta">{item.sourceRefs.length} 条来源</span>
       </div>
 

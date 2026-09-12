@@ -221,8 +221,16 @@ export function HobbyRadar({
     return `活跃度综合分：<b>${a.score}</b><br/><span style="opacity:.8">消息条数 50% + 回复时长 30% + 新鲜度 20%</span><br/><br/>${lines.join('<br/><br/>')}`;
   };
 
-  const selfValue = cats.map((c) => (c === 'social' ? (activity && !activity.insufficient ? activity.score : 0) : toDisplay(scores[c], c)));
-  const compareValue = compare ? cats.map((c) => (c === 'social' ? (compare.activity && !compare.activity.insufficient ? compare.activity.score : 0) : toDisplay(compare.scores[c], c))) : [];
+  /**
+   * 0 分项不要缩在圆心（评审建议 6）：把显示半径映射到 [0.15, 1]，
+   * 使 0 分也能看成一个有面积的多边形顶点，而不是退化成一条线。
+   * 只影响**绘制半径**，悬停明细里的数值仍是真实分数。
+   */
+  const expand = (v: number) => Math.round(v * 0.85 + 15);
+  const selfValue = cats.map((c) => expand(c === 'social' ? (activity && !activity.insufficient ? activity.score : 0) : toDisplay(scores[c], c)));
+  const compareValue = compare
+    ? cats.map((c) => expand(c === 'social' ? (compare.activity && !compare.activity.insufficient ? compare.activity.score : 0) : toDisplay(compare.scores[c], c)))
+    : [];
 
   const option = useMemo<EChartsOption>(
     () => ({
@@ -299,7 +307,16 @@ export function PersonalityRadar({ scores, height = 280 }: { scores: Partial<Rec
       series: [
         {
           type: 'radar',
-          data: [{ value: traits.map((t) => scores[t] ?? 0), name: '性格维度分', areaStyle: { opacity: 0.2 }, lineStyle: { color: '#0ea5e9' }, itemStyle: { color: '#0ea5e9' } }],
+          // 同样把 0 分撑到 15% 半径，避免六边形塌成一条线（评审建议 6）
+          data: [
+            {
+              value: traits.map((t) => Math.round((scores[t] ?? 0) * 0.85 + 15)),
+              name: '性格维度分',
+              areaStyle: { opacity: 0.2 },
+              lineStyle: { color: '#0ea5e9' },
+              itemStyle: { color: '#0ea5e9' },
+            },
+          ],
         },
       ],
     }),

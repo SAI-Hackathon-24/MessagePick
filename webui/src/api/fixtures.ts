@@ -17,6 +17,7 @@
 import type {
   ActivityBreakdown,
   DataSource,
+  PersonalityTrait,
   ExtractItem,
   ExtractType,
   Group,
@@ -635,8 +636,7 @@ export const PERSONA: Record<string, PersonaTrait[]> = Object.fromEntries(
         traitId: `${pid}_pt${i + 1}`,
         trait,
         score: int(45, 96),
-        // 一半作为候选（未确认不得进入任何产物 —— REQ-075），一半已确认
-        status: i % 2 === 0 ? 'confirmed' : 'candidate',
+        // 不再区分候选/已确认（评审裁定）
         origin: 'inferred' as const,
       })),
     ];
@@ -760,7 +760,9 @@ export function buildProfile(personId: string): PersonProfile {
     tags,
     categoryScores,
     personalCloud: tags.map((t) => ({ name: t.name, confidence: t.confidence, category: t.category })),
-    personality: (PERSONA[personId] ?? []).filter((p) => p.status === 'confirmed'),
+    // 评审裁定：性格标签不再区分候选/已确认，全部直接展示
+    personality: PERSONA[personId] ?? [],
+    personalityScores: Object.fromEntries((PERSONA[personId] ?? []).map((t) => [t.trait, t.score])) as Partial<Record<PersonalityTrait, number>>,
     activity: activityCache[personId] ?? 0,
     activityScore: activityBreakdownOf(personId),
     replyMedianMinutes: replyCache[personId],

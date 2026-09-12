@@ -6,7 +6,7 @@
 import { AlertCircle, Inbox, Loader2, RefreshCw, ShieldAlert, type LucideIcon } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
-import { avatarColor } from '@/lib/format';
+import { avatarColor, fmtMD } from '@/lib/format';
 import { ERROR_PRESENTATION, type ApiError, type ErrorCode } from '@/types';
 
 export function Card({
@@ -436,5 +436,40 @@ export function Collapsible({
       </button>
       {open && <div className="border-t border-ink-900/[0.06] px-4 py-3.5">{children}</div>}
     </div>
+  );
+}
+
+/**
+ * DDL 徽标（评审建议 5）
+ * =============================================================================
+ * 所有出现截止时间的位置统一用它：待办与 DDL 条目行、通知总览卡片、即将到期提示。
+ * 要求：字号不小于正文字号 +2px、加粗、coral 色；距到期不足 1 天加「即将到期」徽标。
+ * 验收口径：距离屏幕 1 米能看清 DDL 日期。
+ */
+export function DdlBadge({
+  deadline,
+  label = 'DDL',
+  hint,
+  className,
+}: {
+  /** ISO 时间字符串；为空则不渲染 */
+  deadline?: string;
+  label?: string;
+  /** deadlineHint() 的结果，由调用方传入以复用同一套口径 */
+  hint?: { text: string; overdue: boolean; urgent: boolean } | null;
+  className?: string;
+}) {
+  if (!deadline) return null;
+  const overdue = hint?.overdue ?? false;
+  return (
+    <span className={cn('inline-flex items-center gap-1.5', className)}>
+      <span className={cn('rounded-md bg-coral-500/12 px-1.5 py-0.5 text-[13px] font-bold leading-none', overdue ? 'text-ink-400 line-through decoration-coral-500/50' : 'text-coral-500')}>
+        {label} {fmtMD(deadline)}
+      </span>
+      {hint && !overdue && <span className={cn('text-[12px] font-semibold', hint.urgent ? 'text-coral-500' : 'text-ink-500')}>{hint.text}</span>}
+      {hint?.urgent && !overdue && (
+        <span className="rounded-md bg-coral-500 px-1.5 py-0.5 text-[11px] font-bold leading-none text-white">即将到期</span>
+      )}
+    </span>
   );
 }

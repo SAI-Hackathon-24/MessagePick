@@ -109,13 +109,6 @@ export interface GlobalFilter {
 
 export type ModuleKey = 'meme' | 'extract' | 'social';
 
-/** 关键词匹配对象（REQ-005） */
-export const KEYWORD_SCOPE: Record<ModuleKey, string> = {
-  meme: '梗名与解读',
-  extract: '消息文本与 AI 总结',
-  social: '标签名与成员昵称',
-};
-
 export const MODULE_LABEL: Record<ModuleKey, string> = {
   meme: '群聊梗分析',
   extract: '群聊信息提取',
@@ -648,8 +641,10 @@ export interface PersonProfile {
   categoryScores: Record<InterestCategory, number>;
   /** 个人标签词云（与模块一「梗词云」不同物、不共用名称 —— REQ-017、REQ-073） */
   personalCloud: { name: string; confidence: number; category: InterestCategory }[];
-  /** 性格标签：仅已确认的、仅本人可见（REQ-075、REQ-077） */
+  /** 性格标签（六维分数；不再区分候选/已确认 —— 评审裁定） */
   personality: PersonaTrait[];
+  /** 性格六维分（雷达图直接使用；缺项按 0 处理） */
+  personalityScores?: Partial<Record<PersonalityTrait, number>>;
   /** 活跃度（**发言量**，DM-011 口径；用于契合度因子，只计一次 —— REQ-057） */
   activity: number;
   /**
@@ -663,12 +658,19 @@ export interface PersonProfile {
   groups: { groupId: string; groupName: string }[];
 }
 
-/** 性格标签（DM-016）：候选必须确认后才入库展示（REQ-074、REQ-075） */
+/**
+ * 性格标签（DM-016）。
+ *
+ * 口径更新（评审裁定）：**不再区分「候选 / 已确认」，也不做确认交互**，
+ * 性格雷达图直接展示六维分数。因此 `status` 变为可选（保留字段以便与
+ * `DM-016` 的既有定义兼容，界面不再使用它）。
+ */
 export interface PersonaTrait {
   traitId: string;
   trait: PersonalityTrait;
   score: number;
-  status: 'candidate' | 'confirmed';
+  /** 已废弃：界面不再区分候选与已确认 */
+  status?: 'candidate' | 'confirmed';
   origin: 'inferred' | 'manual';
 }
 

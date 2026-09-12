@@ -14,14 +14,18 @@ import { Plus, Sparkles, Tags, Trash2, UserRound } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { fmtMD } from '@/lib/format';
-import { INTEREST_CATEGORIES, INTEREST_CATEGORY_LABEL, PERSONALITY_LABEL, TAG_ORIGIN_LABEL, type InterestCategory, type PersonalityTrait } from '@/types';
+import { INTEREST_CATEGORIES, INTEREST_CATEGORY_LABEL, PERSONALITY_LABEL, PERSONALITY_TRAITS, TAG_ORIGIN_LABEL, type InterestCategory, type PersonalityTrait } from '@/types';
 import { Avatar, Badge, Card, CardHeader, Chip, Collapsible, EmptyState, ErrorState, LoadingState, MiniStat, NoticeBar } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 import { HobbyRadar, PersonalityRadar } from '@/components/charts/Charts';
 
 export function PersonProfilePanel({ personId }: { personId: string }) {
-  const profile = useApi(() => api.personProfile(personId), [personId]);
-  const persona = useApi(() => api.personaPanel(personId), [personId]);
+  /**
+   * personId 由上游（人物图谱）异步派生，可能在首帧还是空串。
+   * 这里必须**保持面板挂载**并显示加载态：此前 personId 为空时上游直接不渲染本组件，
+   * 导致「同一路由有时有面板、有时整块消失」的竞态（评审第 3 轮排查发现）。
+   */
+  const profile = useApi(() => (personId ? api.personProfile(personId) : Promise.resolve({ ok: true, data: null } as never)), [personId]);
   const [expanded, setExpanded] = useState<InterestCategory | null>(null);
   const [adding, setAdding] = useState(false);
   const [newTag, setNewTag] = useState('');
@@ -29,12 +33,29 @@ export function PersonProfilePanel({ personId }: { personId: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  if (profile.loading && !profile.data) return <LoadingState label="正在读取兴趣画像…" rows={3} />;
+  // 面板外壳始终渲染（带 data-testid），内部按状态切换，避免布局与断言的抖动
+  if (!personId || (profile.loading && !profile.data)) {
+    return (
+      <div data-testid="person-profile">
+        <LoadingState label="正在读取兴趣画像…" rows={3} />
+      </div>
+    );
+  }
   if (profile.error) {
-    return <ErrorState error={profile.error} onRetry={profile.refetch} />;
+    return (
+      <div data-testid="person-profile">
+        <ErrorState error={profile.error} onRetry={profile.refetch} />
+      </div>
+    );
   }
   const p = profile.data;
-  if (!p) return <EmptyState title="没有可展示的画像" />;
+  if (!p) {
+    return (
+      <div data-testid="person-profile">
+        <EmptyState title="没有可展示的画像" />
+      </div>
+    );
+  }
 
   const personalityScores = Object.fromEntries(p.personality.map((t) => [t.trait, t.score])) as Partial<Record<PersonalityTrait, number>>;
 
@@ -50,14 +71,6 @@ export function PersonProfilePanel({ personId }: { personId: string }) {
       setNewTag('');
     } else {
       setMsg(`${res.error?.message ?? '操作未生效'}（${res.error?.code ?? 'UNKNOWN'}）`);
-    }
-  };
-
-  const updatePersona = async (op: 'confirm' | 'add' | 'delete' | 'edit', traitId: string, trait?: PersonalityTrait) => {
-    const res = await api.updatePersona(personId, op, traitId, trait);
-    if (res.ok && res.data) {
-      persona.setData(() => res.data!);
-      profile.refetch();
     }
   };
 
@@ -252,60 +265,37 @@ export function PersonProfilePanel({ personId }: { personId: string }) {
         </ul>
       </Collapsible>
 
-      {/* 性格标签：候选 → 确认 → 展示（REQ-074 ~ REQ-077）：默认收起，降低整页信息密度 */}
-      <Collapsible
-        title="性格标签"
-        icon={UserRound}
-        count={(persona.data?.confirmed ?? []).length}
-        hint="六维闭集：领导式 / 活泼 / 幽默 / 冷静 / 理性 / 判断。候选必须经确认后才展示；仅对使用者本人可见"
-        testId="profile-persona-collapse"
-      >
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div>
-            <div className="mp-section-title mb-2">已确认（会出现在画像与视图中）</div>
-            <div className="flex flex-wrap gap-1.5">
-              {(persona.data?.confirmed ?? []).map((t) => (
-                <span key={t.traitId} className="inline-flex items-center gap-1 rounded-lg border border-jade-500/25 bg-jade-500/[0.08] px-2 py-1 text-xs text-ink-700">
-                  {PERSONALITY_LABEL[t.trait]}
-                  <span className="tabular-nums text-ink-400">{t.score}</span>
-                  <button type="button" aria-label="删除" onClick={() => void updatePersona('delete', t.traitId)}>
-                    <Trash2 size={11} className="text-coral-500" />
-                  </button>
-                </span>
-              ))}
-              {!(persona.data?.confirmed ?? []).length && <span className="mp-meta">暂无已确认的性格标签</span>}
-            </div>
-
-            <div className="mp-section-title mb-2 mt-4">候选（未确认，不出现在任何产物与视图中）</div>
-            <div className="flex flex-wrap gap-1.5">
-              {(persona.data?.candidates ?? []).map((t) => (
-                <span key={t.traitId} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-ink-900/15 px-2 py-1 text-xs text-ink-500">
-                  {PERSONALITY_LABEL[t.trait]}
-                  <span className="tabular-nums text-ink-400">{t.score}</span>
-                  <Button size="sm" variant="ghost" onClick={() => void updatePersona('confirm', t.traitId)} className="!px-1 !py-0 !text-[11px]">
-                    确认
-                  </Button>
-                </span>
-              ))}
-              {!(persona.data?.candidates ?? []).length && <span className="mp-meta">暂无待确认候选</span>}
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {(['leadership', 'lively', 'humorous', 'calm', 'rational', 'judgement'] as PersonalityTrait[]).map((t) => (
-                <Chip key={t} onClick={() => void updatePersona('add', `manual_${t}_${Date.now()}`, t)} title="人工新增（闭集内）">
-                  + {PERSONALITY_LABEL[t]}
-                </Chip>
-              ))}
-            </div>
-          </div>
+      {/* 性格标签：直接展示六维分数（评审裁定：不做候选/确认流程） */}
+      <Card data-testid="persona-panel">
+        <CardHeader
+          title="性格标签"
+          icon={UserRound}
+          subtitle="六维闭集：领导式 / 活泼 / 幽默 / 冷静 / 理性 / 判断；直接展示分数，无需确认"
+          right={<Badge tone="neutral">{Object.keys(personalityScores).length} / 6 维</Badge>}
+        />
+        <div className="grid gap-4 px-4 py-3.5 lg:grid-cols-2">
           <div>
             <PersonalityRadar scores={personalityScores} />
             <p className="mp-meta mt-1 leading-relaxed">
-              性格维度分只统计状态为「已确认」的标签（REQ-075、REQ-080）；本面板不提供任何对外分享通道（REQ-077、REQ-085）。
+              六维分数由模型从群聊消息推断，仅对使用者本人可见；本面板不提供任何对外分享通道。
             </p>
           </div>
+          <ul className="space-y-2">
+            {PERSONALITY_TRAITS.map((t) => {
+              const score = personalityScores[t] ?? 0;
+              return (
+                <li key={t} className="flex items-center gap-2.5">
+                  <span className="w-[52px] shrink-0 text-xs font-medium text-ink-700">{PERSONALITY_LABEL[t]}</span>
+                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink-900/[0.06]">
+                    <span className="block h-full rounded-full bg-sky-500/70" style={{ width: `${Math.min(100, score)}%` }} />
+                  </span>
+                  <span className="w-9 shrink-0 text-right text-xs font-semibold tabular-nums text-ink-700">{score}</span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
-      </Collapsible>
+      </Card>
     </div>
   );
 }

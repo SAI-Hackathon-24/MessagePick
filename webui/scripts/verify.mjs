@@ -78,6 +78,17 @@ const clickText = (sel, text) => `(() => {
   return { ok: true, text: (el.textContent||'').trim().slice(0, 30) };
 })()`;
 
+
+/** 等待某选择器出现（最多约 8 秒）；用于懒加载图表与异步取数的页面 */
+async function waitFor(selector, tries = 20) {
+  for (let i = 0; i < tries; i++) {
+    const ok = await ev(`!!document.querySelector(${JSON.stringify(selector)})`);
+    if (ok) return true;
+    await sleep(400);
+  }
+  return false;
+}
+
 const results = [];
 const rec = (id, desc, pass, detail = '') => {
   results.push({ id, desc, pass, detail });
@@ -100,13 +111,15 @@ const shell = await ev(`(() => {
     timeFilter: !!document.querySelector('[data-testid="filter-time"]'),
     keyword: !!document.querySelector('[data-testid="filter-keyword"]'),
     identityShown: /我：/.test(t),
-    keywordScope: /关键词匹配：梗名与解读/.test(t),
+    keywordScope: false,
+    keywordPlain: document.querySelector('[data-testid="filter-keyword"]')?.getAttribute('placeholder') === '关键词',
+    keywordPlaceholder: document.querySelector('[data-testid="filter-keyword"]')?.getAttribute('placeholder'),
     navAll: ['群聊梗分析','群聊信息提取','正向 / 反向社交'].every(n => t.includes(n)),
   };
 })()`);
 rec('REQ-002', '「记录更新至 X」与「更新数据」入口常驻可见', shell.updatedTo && shell.updateBtn, `updated-to=${shell.updatedTo} 更新按钮=${shell.updateBtn}`);
 rec('REQ-004', '全局筛选条含群多选 / 时间范围 / 关键词 / 身份四项', shell.filterBar && shell.groupFilter && shell.timeFilter && shell.keyword && shell.identityShown, `身份显示=${shell.identityShown}`);
-rec('REQ-005', '关键词匹配对象随模块标注（模块一 = 梗名与解读）', shell.keywordScope, `标注=${shell.keywordScope}`);
+rec('REQ-005', '关键词输入框统一为「关键词」（后缀标注已按要求移除 —— 评审建议 2）', shell.keywordPlain === true, `占位符=「${shell.keywordPlaceholder}」`);
 rec('REQ-018', '三个模块并列出现且可进入', shell.navAll, '');
 
 /* 术语口径（REQ-017）：不得出现被废弃的旧术语 */
@@ -217,6 +230,7 @@ rec('REQ-037/038', '提供 G2 文字变体与 G3 创造新梗入口', genPanel.h
 /* ============================ 模块三（MOD-007） ============================ */
 
 await goto('#/social/forward');
+await waitFor('[data-testid="person-profile"]');
 // 画像里的证据表与性格标签默认折叠（降低信息密度），断言前先展开
 await ev(`(() => { const b = document.querySelector('[data-testid="profile-tags-collapse"]'); if (b) b.click(); return !!b; })()`);
 await ev(`(() => { const b = document.querySelector('[data-testid="profile-persona-collapse"]'); if (b) b.click(); return !!b; })()`);
@@ -230,7 +244,7 @@ const social = await ev(`(() => {
     personalCloud: /个人标签词云/.test(t),
     cloudDistinct: /与模块一的「梗词云」是不同物/.test(t),
     personality: /性格标签/.test(t),
-    candidateWarn: /未确认，不出现在任何产物与视图中/.test(t),
+    candidateWarn: /候选/.test(t),
     boundary: /不做自动监测推送/.test(t) && /不替你发消息/.test(t),
     pair: /两人配对/.test(t),
     scoreCards: /兴趣评分卡/.test(t),
@@ -241,7 +255,7 @@ const social = await ev(`(() => {
 })()`);
 rec('REQ-050', '正向（人 → 兴趣）与反向（兴趣 → 人）两个方向都可进入', social.forward && social.reverse, '');
 rec('REQ-071/073', '含爱好雷达图与个人标签词云，且与模块一梗词云区分命名', social.hobbyRadar && social.personalCloud && social.cloudDistinct, `雷达=${social.hobbyRadar} 词云=${social.personalCloud} 区分说明=${social.cloudDistinct}`);
-rec('REQ-075', '性格标签候选明确标注「未确认不出现在任何产物与视图」', social.personality && social.candidateWarn, '');
+rec('REQ-075', '性格标签直接展示六维分数，无候选/确认交互（评审建议 7）', social.personality && social.candidateWarn === false, `性格标签=${social.personality} 候选字样=${social.candidateWarn}`);
 await ev(`location.hash='#/social/pair'`); await sleep(1800);
 const pairView = await ev(`(() => { const t = document.querySelector('main')?.innerText || ''; return { pair: /两人配对|契合度/.test(t), scoreCards: /兴趣评分卡/.test(t) }; })()`);
 rec('REQ-062/068', '含两人配对与兴趣评分卡', pairView.pair && pairView.scoreCards, `配对=${pairView.pair} 评分卡=${pairView.scoreCards}`);
@@ -307,8 +321,23 @@ rec('REQ-046', '待办提供完成 / 忽略标记', extract.todoMark, '');
 rec('REQ-049', '模块二内不出现第二组日期筛选控件', extract.noExtraFilter, `页面内 date 输入=${!extract.noExtraFilter}`);
 
 /* 消息详情：heading 三要素 + 正文 + 内联兴趣提示 */
-await ev(`(() => { const c = [...document.querySelectorAll('[role="button"]')].find(e => /条来源/.test(e.innerText||'')); if (c) c.click(); return !!c; })()`);
-await sleep(1600);
+// 按建议 3，通知总览页已隐藏时间轴，条目卡片只在「消息时间轴」子页；
+// 因此先切到该子页再取条目打开详情。
+await ev(`location.hash='#/extract/timeline'`);
+await waitFor('main [role="button"]');
+await sleep(800);
+const openedCard = await ev(`(() => {
+  const c = [...document.querySelectorAll('main [role="button"]')].find(e => /条来源/.test(e.innerText||''));
+  if (!c) return { ok: false };
+  c.click();
+  return { ok: true, text: (c.innerText||'').replace(/\\s+/g,' ').slice(0, 40) };
+})()`);
+// 抽屉内容为异步取数，轮询等待
+for (let i = 0; i < 15; i++) {
+  await sleep(400);
+  const ready = await ev(`!!document.querySelector('[data-drawer-kind="message-detail"]')`);
+  if (ready) break;
+}
 const detail = await ev(`(() => {
   const d = document.querySelector('[data-drawer-kind="message-detail"]');
   if (!d) return { open: false };
@@ -322,7 +351,7 @@ const detail = await ev(`(() => {
     inlineUnknown: /发言不足/.test(t),
   };
 })()`);
-rec('REQ-048', '消息详情含 heading（一句话总结 + 来源群 + 时间）与正文（AI 总结 + 全部来源消息）', detail.open && detail.aiSummary && detail.allSources, `AI 总结=${detail.aiSummary} 全部来源=${detail.allSources}`);
+rec('REQ-048', '消息详情含 heading（一句话总结 + 来源群 + 时间）与正文（AI 总结 + 全部来源消息）', openedCard.ok && detail.open && detail.aiSummary && detail.allSources, `点击=${openedCard.ok} 抽屉=${detail.open} AI 总结=${detail.aiSummary} 全部来源=${detail.allSources}`);
 rec('REQ-070', '消息详情内联给出成员兴趣提示（含未知成员标注）', detail.interestHints || detail.inlineUnknown, `兴趣提示=${detail.interestHints} 未知标注=${detail.inlineUnknown}`);
 
 /* ============================ 设置与隐私 ============================ */
@@ -397,7 +426,8 @@ rec('导航', '12 个子路由均可进入且标题正确', routeResults.every((
 /* 新增：活跃度维度（替代雷达图「社交」轴）                              */
 /* ================================================================== */
 await goto('#/social/forward');
-await sleep(1200);
+await waitFor('[data-testid="person-profile"]');
+await sleep(600);
 const activity = await ev(`(() => {
   const t = document.querySelector('main')?.innerText || '';
   return {
@@ -556,7 +586,8 @@ rec('数据自检', '人标识唯一且未知名单不与已知人员重叠（�
 /* 新增：活跃度悬停明细（含三项原始指标与数据不足分支）                     */
 /* ================================================================== */
 await goto('#/social/forward');
-await sleep(1200);
+await waitFor('[data-testid="person-profile"]');
+await sleep(600);
 // 展开第五根轴（活跃度）的构成明细
 const axisClick = await ev(`(() => {
   const chips = [...document.querySelectorAll('button')].filter(b => /^活跃度/.test((b.textContent||'').trim()));
@@ -580,6 +611,124 @@ const breakdown = await ev(`(() => {
 rec('活跃度', '展开后可看到三项原始指标明细与权重（不只给总分）',
   axisClick.ok && breakdown.hasMessages && breakdown.hasReply && breakdown.hasFreshness && breakdown.hasWeight && breakdown.hasFormula,
   `指标=${[breakdown.hasMessages && '消息条数', breakdown.hasReply && '回复时长', breakdown.hasFreshness && '新鲜度'].filter(Boolean).join('/')} 权重=${breakdown.hasWeight} 口径=${breakdown.hasFormula}`);
+
+
+/* ================================================================== */
+/* 第三轮评审：新增断言                                                  */
+/* ================================================================== */
+
+/* 热力图：必须渲染出全部行（此前 value 用四元组会退化成一行） */
+await goto('#/meme/lifecycle');
+await sleep(3000);
+const heatRows = await ev(`(() => {
+  const cv = document.querySelector('main canvas');
+  if (!cv) return { canvas: 0 };
+  const g = cv.getContext('2d');
+  const d = g.getImageData(0, 0, cv.width, cv.height).data;
+  // 逐行（每 8px 一带）统计「绿色系」像素，用于判断有多少行被真正绘制
+  const bands = [];
+  for (let y0 = 0; y0 < cv.height; y0 += 8) {
+    let hit = 0;
+    for (let y = y0; y < Math.min(y0 + 8, cv.height); y++) {
+      for (let x = 0; x < cv.width; x += 4) {
+        const i = (y * cv.width + x) * 4;
+        if (d[i + 3] > 0 && d[i + 1] > d[i] + 6) hit++;
+      }
+    }
+    if (hit > 40) bands.push(y0);
+  }
+  return { canvas: cv.width + 'x' + cv.height, coloredBands: bands.length };
+})()`);
+rec('生命周期', '热力图渲染出多行（防「value 用四元组导致退化成一行」回归）',
+  (heatRows.coloredBands ?? 0) >= 6, `canvas=${heatRows.canvas} 有色的行带=${heatRows.coloredBands}`);
+
+/* 词云：不应有旋转词（旋转的中日韩文字会互相压字） */
+await goto('#/meme/cloud');
+await sleep(2500);
+const cloudCheck = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return { hasCloudHint: /字号 = 该梗的出现频率/.test(t), words: document.querySelectorAll('main canvas').length };
+})()`);
+rec('梗词云', '词云正常渲染且不再使用旋转布局（旋转会压字）', cloudCheck.hasCloudHint && cloudCheck.words > 0, `说明=${cloudCheck.hasCloudHint}`);
+
+/* 人-人图谱：新增「只显示自己关系」与两个检索 */
+await goto('#/social/graph');
+await sleep(2200);
+const graphTools = await ev(`(() => ({
+  nameSearch: !!document.querySelector('[data-testid="graph-name-search"]'),
+  tagSearch: !!document.querySelector('[data-testid="graph-tag-search"]'),
+  onlyMine: !!document.querySelector('[data-testid="graph-only-mine"]'),
+}))()`);
+rec('图谱检索', '图谱页有成员检索 / tag 检索 / 只显示自己关系', graphTools.nameSearch && graphTools.tagSearch && graphTools.onlyMine,
+  `成员=${graphTools.nameSearch} tag=${graphTools.tagSearch} 只看自己=${graphTools.onlyMine}`);
+
+const mineFiltered = await ev(`(() => {
+  const before = document.querySelector('main')?.innerText.match(/(\\d+) \\/ (\\d+) 人/);
+  const b = document.querySelector('[data-testid="graph-only-mine"]');
+  if (!b) return { ok: false };
+  b.click();
+  return { ok: true, before: before ? before[0] : null };
+})()`);
+await sleep(1500);
+const mineAfter = await ev(`(() => {
+  const m = document.querySelector('main')?.innerText.match(/(\\d+) \\/ (\\d+) 人/);
+  return { after: m ? m[0] : null };
+})()`);
+rec('图谱检索', '「只显示自己关系」确实减少了节点数', mineFiltered.ok && !!mineAfter.after && mineAfter.after !== mineFiltered.before,
+  `${mineFiltered.before} → ${mineAfter.after}`);
+
+/* 提取条目：文案与来源数 */
+await goto('#/extract/timeline');
+await sleep(2000);
+const extractText = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  const cards = [...document.querySelectorAll('main [role=\"button\"]')];
+  const withSource = cards.filter((c) => /条来源/.test(c.innerText || ''));
+  const clickableSource = withSource.some((c) => [...c.querySelectorAll('button')].some((b) => /回原文/.test(b.textContent || '')));
+  return {
+    hasZhiKan: /点一下只看/.test(t),
+    hasHuiYuanwen: /回原文/.test(t),
+    sourceText: withSource.length > 0,
+    clickableSource,
+  };
+})()`);
+rec('文案', '指标卡文案已去掉「只看」二字', extractText.hasZhiKan === false, `仍含「点一下只看」=${extractText.hasZhiKan}`);
+rec('来源', '「N 条来源」保留为不可点文字，「回原文」入口已移除', extractText.sourceText && !extractText.hasHuiYuanwen && !extractText.clickableSource,
+  `来源文字=${extractText.sourceText} 回原文残留=${extractText.hasHuiYuanwen}`);
+
+/* 全局搜索框占位符 */
+const ph = await ev(`(() => { const i = document.querySelector('[data-testid="filter-keyword"]'); return i ? i.getAttribute('placeholder') : null; })()`);
+rec('全局搜索', '关键词输入框占位符统一为「关键词」，无匹配后缀', ph === '关键词', `placeholder=「${ph}」`);
+
+/* DDL 视觉强化 */
+const ddl = await ev(`(() => {
+  // 只取「自身直接承载 DDL 文本」的元素（外层容器是 inline-flex，没有字号样式）
+  const els = [...document.querySelectorAll('main span')].filter((e) => /^DDL /.test((e.textContent || '').trim()) && e.children.length === 0);
+  if (!els.length) return { count: 0 };
+  const cs = getComputedStyle(els[0]);
+  return { count: els.length, fontSize: parseFloat(cs.fontSize), weight: Number(cs.fontWeight), color: cs.color };
+})()`);
+rec('DDL', 'DDL 徽标字号 ≥13px、加粗、coral 色', ddl.count > 0 && ddl.fontSize >= 13 && ddl.weight >= 700,
+  `数量=${ddl.count} 字号=${ddl.fontSize}px 字重=${ddl.weight} 颜色=${ddl.color}`);
+
+/* 性格标签：不再有候选/确认交互 */
+await goto('#/social/forward');
+await waitFor('[data-testid="persona-panel"]');
+await sleep(400);
+const personaCheck = await ev(`(() => {
+  // 只在性格面板范围内断言，避免命中页面其它位置的「确认」字样
+  const panel = document.querySelector('[data-testid="persona-panel"]');
+  const t = panel ? panel.innerText : '';
+  return {
+    hasPanel: !!panel,
+    hasCandidate: /候选/.test(t),
+    hasConfirmButton: !!panel && [...panel.querySelectorAll('button')].some((b) => /确认/.test(b.textContent || '')),
+    hasSixDims: ['领导式', '活泼', '幽默', '冷静', '理性', '判断'].every((d) => t.includes(d)),
+  };
+})()`);
+rec('性格标签', '性格标签直接展示六维分数，不再有候选/确认交互',
+  personaCheck.hasPanel && personaCheck.hasSixDims && !personaCheck.hasCandidate && !personaCheck.hasConfirmButton,
+  `面板=${personaCheck.hasPanel} 六维齐全=${personaCheck.hasSixDims} 候选字样=${personaCheck.hasCandidate} 确认按钮=${personaCheck.hasConfirmButton}`);
 
 console.log('\n===== 汇总 =====');
 const passed = results.filter((r) => r.pass).length;
