@@ -13,7 +13,7 @@
  * - `orchestration/detail-assembly.ts` + `hint-members.ts` ← 「详情组装」节；
  * - `progress/sse-hub.ts` ← 「进度传输」节。
  *
- * 明确不做（口径来自上游）：不暴露模块内部队列深度（CHG-024）、不提供演示数据通道（`REQ-019`）、
+ * 明确不做（口径来自上游）：不暴露模块内部队列深度（CHG-026）、不提供演示数据通道（`REQ-019`）、
  * 不持有业务数据副本、不改写任何模块输出、不新增错误标识（`code` 只取 `@shared` 的 14 个闭集值）。
  */
 
@@ -184,7 +184,7 @@ export function defaultWebDir(): string {
 }
 
 // ---------------------------------------------------------------------------
-// 操作登记（设计落点 `orchestration/operation-tracker.ts`；CHG-024：只登记外壳发起的操作）
+// 操作登记（设计落点 `orchestration/operation-tracker.ts`；CHG-026：只登记外壳发起的操作）
 // ---------------------------------------------------------------------------
 
 interface OperationTracker {
@@ -472,7 +472,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
-  // API-004（实体类型 = 群）群清单读路径（直通；群标识 + 群名，CHG-024）
+  // API-004（实体类型 = 群）群清单读路径（直通；群标识 + 群名，CHG-026）
   app.get(
     '/api/filter-options/groups',
     handle('filter-options:groups', (req, res) => {

@@ -1,5 +1,5 @@
 /**
- * 外壳发起操作的类型与派生口径（mod-004 §3.3 / §4.5 / §5.2；详设 §1.3、CHG-024）。
+ * 外壳发起操作的类型与派生口径（mod-004 §3.3 / §4.5 / §5.2；详设 §1.3、CHG-026）。
  *
  * 口径：
  * - 页面只展示**外壳发起**的操作（更新 / 删除 / 预热 / 生成）的排队与在途数量；
@@ -91,7 +91,7 @@ export function parseOperationsPayload(raw: unknown): { operations: ShellOperati
   return { operations }
 }
 
-/** 排队与在途数量（CHG-024：页面只展示这两类数量）。 */
+/** 排队与在途数量（CHG-026：页面只展示这两类数量）。 */
 export function operationSummary(operations: readonly ShellOperation[]): {
   queued: number
   running: number

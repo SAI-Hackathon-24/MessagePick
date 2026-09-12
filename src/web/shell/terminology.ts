@@ -65,7 +65,7 @@ export interface CopyViolation {
   text: string
 }
 
-/** 契约层编号（API-001 / REQ-017 / MOD-004 / DM-003 / AC-039 / CHG-024）不得出现在界面文案里。 */
+/** 契约层编号（API-001 / REQ-017 / MOD-004 / DM-003 / AC-039 / CHG-026）不得出现在界面文案里。 */
 const CONTRACT_ID_PATTERN = /\b(?:API|REQ|MOD|DM|AC|CHG)[-_]\d{2,3}\b/
 
 /** 错误标识（由闭集常量生成，闭集变化时扫描口径同步变化）。 */

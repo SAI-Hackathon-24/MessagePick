@@ -1,0 +1,36 @@
+{
+  "name": "messagepick-webui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "聊斋 MessagePick WebUI —— 按 docs/design 契约实现（MOD-004 外壳 + 梗分析 / 信息提取 / 社交画像）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify.mjs"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "dayjs": "^1.11.13",
+    "echarts": "^5.6.0",
+    "echarts-wordcloud": "^2.1.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

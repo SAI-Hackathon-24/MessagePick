@@ -1,4 +1,10 @@
-# MessagePick
+# 聊斋 MessagePick
+
+> **第 24 组 · 回声队** · SAI 2026 级新生黑客松 AI 挑战赛
+>
+> 在成员多、消息量大的微信群里，信息爆炸让人陷入「获取信息疲劳」与「重要信息遗漏」的双重困境；
+> 同时群里自然生长出的热梗、黑话与共同记忆，因为缺少沉淀与再创作机制而转瞬即逝。
+> 聊斋要解决的就是这两件事：**把碎片化消息变成清晰可执行的信息，把群文化变成可传播、可再创作的资产。**
 
 单机、单用户的本地 Web 应用：采集本机微信聊天记录 → **梗分析 / 信息提取 / 社交画像 / 再创作生成** 四个模块。
 
@@ -9,7 +15,39 @@
   - `docs/design/api-contract.md`、`docs/design/data-model.md`（契约层：接口与实体）
   - `docs/design/impl/mod-00*.md`（8 个模块的实现层设计，每个模块一份）
 
-> 本仓库是**单包**结构（不使用 npm workspaces）：一个 `package.json`、一个 `tsconfig.json`，服务端与前端同包。
+> 主工程是**单包**结构（不使用 npm workspaces）：一个 `package.json`、一个 `tsconfig.json`，服务端（`src/server/`）与页面（`src/web/`）同包构建；另有独立前端包 `webui/`（自带 `package.json` / `package-lock.json`，不在主工程的类型检查与构建范围内）。
+
+---
+
+## 三大核心功能
+
+| # | 功能 | 一句话 |
+|---|---|---|
+| 一 | **群聊热梗与文化符号的提炼与再创作** | 一键提炼群内热梗 → 词云 / 梗卡片 / 时间轴 → 生成表情包、配文图 |
+| 二 | **微信重要通知的智能提取与多维集中展示** | 识别公告、@所有人、接龙、报名、缴费、会议、DDL → 通知总览与待办 |
+| 三 | **好友性格画像与趣味人格匹配** | 基于聊天行为生成性格卡片，匹配同频好友（**设计中，待定稿**） |
+
+## 整体运作方式
+
+```
+微信本地数据
+   │  （只读、不出本机）
+   ▼
+wechat-cli ──────────► utils：外部工具调用（wechat-cli、llm）
+   │  JSON                  │
+   ▼                        ▼
+core：业务逻辑，生成结构化 prompt ──► 同时暴露 MCP 工具，让 LLM 补充观察上下文
+   │
+   ▼
+webui：图形化界面（本仓库 webui/）
+```
+
+## 团队成员
+
+杨贺尧（测试 / 产品测试）· 李沛轩（技术 / 架构）· 蒋驰骋（策划 / 产品）· 刘行健（技术）·
+杨睿哲（测试）· 陈禹哲（技术 / 答辩）· 陈诺（技术 / 前端设计）
+
+---
 
 ## 环境要求
 
@@ -35,7 +73,17 @@ npm install
 
 开发期代理目标默认 `http://127.0.0.1:8787`（见 `vite.config.ts`）。服务进程端口默认由应用数据目录的 `config.json` 的 `server.port` 决定（默认 `0` = 自动选空闲端口，详设 §7）；开发时请把 `server.port` 固定为 `8787`，或用环境变量 `MESSAGEPICK_SERVER_PORT` 覆盖代理目标端口。
 
-> 注意：`src/server/main.ts` 与 `src/web/main.tsx` 目前是 **Wave 0 占位**（见下文「脚手架占位」），在 MOD-004 接线前 `npm start` / `npm run dev:server` 会以明确提示退出，这是预期状态。
+> 说明：`src/server/main.ts` 与 `src/web/main.tsx` 已由 `MOD-004` 接线（`src/server/shell/`、`src/web/shell/`）：`npm start` 会选端口 → 启服务 → 打开带令牌页面（详设决策 9），`Ctrl+C` / `SIGTERM` 停止。
+
+### 快速开始（webui/）
+
+```bash
+cd webui
+npm install
+npm run dev        # → http://127.0.0.1:5273
+```
+
+当前 `webui/` 使用内置开发期数据即可完整走通三大功能的页面与交互，**不依赖后端**；异常分支（空态 / 失败态 / 慢速）可直接用顶栏开关或 URL 参数 `?sim=empty|error|slow` 走查。细节见 [`webui/README.md`](webui/README.md)。
 
 ## 测试 / 类型检查 / 构建
 
@@ -45,6 +93,8 @@ npm test            # vitest run（覆盖 src/**/*.test.ts）
 npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务端类型检查）
 ```
 
+`webui/` 为独立包，构建与自检命令见 [`webui/README.md`](webui/README.md)。
+
 ## 目录结构
 
 ```text
@@ -52,6 +102,7 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
 ├── package.json / tsconfig.json / vite.config.ts / vitest.config.ts
 ├── README.md                       # 本文件
 ├── docs/                           # 设计文档（不要改；变更走 design-doc-change skill）
+├── webui/                          # 独立包：契约驱动的前端实现（React + TS + Vite + Tailwind）
 └── src/
     ├── shared/                     # 共享契约类型（全模块只读消费）
     │   ├── errors.ts               #   14 个错误标识 + 统一错误信封
@@ -61,14 +112,14 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
     │   ├── index.ts                #   统一出口
     │   └── contracts.test.ts       #   契约自检（错误标识 14 个、34 条 API 类型可引用）
     ├── server/                     # 服务进程（Node）
-    │   └── main.ts                 #   ⚠️ Wave 0 占位入口，由 MOD-004 接线
+    │   └── main.ts                 #   入口：选端口 → 启服务 → 打开带令牌页面（MOD-004 已接线）
     │   # ingest/  store/  engine/  shell/  meme/  extract/  social/  regen/
-    │   # ↑ 各模块目录（src/server/<模块>/）由对应模块负责人创建
+    │   # ↑ 各模块目录（src/server/<模块>/）
     └── web/                        # 浏览器页面（React + ECharts）
-        ├── index.html              #   ⚠️ vite 入口（Wave 0 占位，MOD-004 补全）
-        ├── main.tsx                #   ⚠️ Wave 0 占位挂载点，由 MOD-004 接线
+        ├── index.html              #   vite 入口
+        ├── main.tsx                #   挂载点：接线 src/web/shell/（MOD-004 已接线）
         # shell/  meme/  extract/  social/  regen/
-        # ↑ 各视图目录（src/web/<视图>/）由对应模块负责人创建
+        # ↑ 各视图目录（src/web/<视图>/）
 ```
 
 ### 模块 → 代码目录对照（详见各 `mod-###-<slug>.md` §3.1）
@@ -100,10 +151,10 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
 6. **跨模块调用只走设计文档声明的接口**：业务模块之间的数据传递一律经 `MOD-004` 转交（`REQ-018`）；模块不得反向依赖外壳（`AC-040`）。
 7. **Wave 0 已预置且预期稳定的东西**：`npm run typecheck` / `npm test` / `npm run build` 三条命令必须保持绿色；共享类型名与枚举取值一旦下发即按契约使用。
 
-### 脚手架占位（由 MOD-004 在实现波次替换）
+### 入口接线（MOD-004 已落地）
 
-- `src/server/main.ts`：服务进程入口（`dev:server` / `start` 的入口）——接线 `src/server/shell/app.ts`。
-- `src/web/index.html` + `src/web/main.tsx`：vite 入口与 React 根节点挂载——接线 `src/web/shell/`。
+- `src/server/main.ts`：服务进程入口（`dev:server` / `start` 的入口）——已接线 `src/server/shell/app.ts`。
+- `src/web/index.html` + `src/web/main.tsx`：vite 入口与 React 根节点挂载——已接线 `src/web/shell/`。
 
 ## 共享契约类型（`src/shared/`）
 
@@ -123,6 +174,37 @@ npm run build       # vite build（前端 → dist/web）+ tsc --noEmit（服务
 - **错误**：契约错误只取 14 个标识，不新增；失败 / 超时通过 `ErrorEnvelope` 表达，分项展示与分项重试按 `scope` 聚合。
 - **别名**：`GlobalFilter` / `FilterCondition` = `SharedFilter`；`PageInput` = `PageRequest`；`UpdateStatus` = `Api002Response`；`GroupRef` = `DM-002` 记录（群标识 + 群名）。
 - **外壳附加字段**：所有响应由 `MOD-004` 在外层附 `epoch` / `requestId`（`ShellResponseMeta`，mod-004 §4.1 / 详设 §3.3）。
+
+---
+
+## 协作与文档规范（重要）
+
+本仓库采用「**prompt 驱动、文档先行**」的推进方式，规则有唯一事实来源：
+
+| 想知道 | 去哪看 |
+| --- | --- |
+| 我该做什么、按什么顺序做 | [`CONTRIBUTING.md`](CONTRIBUTING.md)（入口，非规则本身） |
+| 文档架构、ID 规则、状态机、变更传播 | [`docs/README.md`](docs/README.md)（**规则定义唯一处**） |
+| 契约层 / 实现层怎么分 | [`docs/design/README.md`](docs/design/README.md) |
+| 变更记录（审计日志） | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) |
+
+主链：`raw/raw_design.md`（人手写）→ `product/prd.md` → `design/modules.md` →
+`design/api-contract.md` / `design/data-model.md` → `plan/tasks.md` → `plan/acceptance-tests.md`
+（另有一条实现层分支：`prd` + `modules` → `design/impl/high-level-design.md` → 详设 → `mod-###-<slug>.md`）
+
+> 文档状态：各文档的当前状态（`draft` / `reviewed` / `frozen`）以 [`docs/README.md`](docs/README.md) 的状态总表为准。
+
+### `webui/` 的定位
+
+`webui/` 是**按已定稿契约实现的前端**（`MOD-004` 外壳 + 三个业务模块的视图与交互）。
+
+- 需求、模块、接口、数据模型、验收用例的**唯一事实来源**在 `docs/` 主链；
+  `webui/` 不复制契约正文，只在 `webui/src/types.ts` 中做类型映射，并逐条标注 `API-###`
+- 仓库当前并存两套前端代码：单包内的 `src/web/`（`MOD-004` 外壳与各模块视图，`npm run dev:web` 启动）
+  与独立包 `webui/`（`cd webui && npm run dev` 启动）。`webui/` 尚未接线真实后端，默认运行在开发期
+  数据模式（`src/api/fixtures.ts` + `mock.ts`，严格按数据模型口径产出）；
+  `REQ-019` / `AC-010` 要求不做演示数据版本，故这两个文件在接入真实后端后必须删除
+- 怎么跑、怎么自检见 [`webui/README.md`](webui/README.md)
 
 ## 许可与版权
 

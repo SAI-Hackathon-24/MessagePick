@@ -169,7 +169,7 @@ export interface ReadResult<T extends EntityType = EntityType> {
 
 /** API-004 按条件读取（MOD-002）。 */
 export interface Api004Request<T extends EntityType = EntityType> {
-  /** 实体类型；实体类型 = 群（'DM-002'）时用于读取群清单（群标识 + 群名），供全局筛选的群多选与按群删除的群选择项（CHG-024） */
+  /** 实体类型；实体类型 = 群（'DM-002'）时用于读取群清单（群标识 + 群名），供全局筛选的群多选与按群删除的群选择项（CHG-026） */
   entityType: T
   /** 筛选条件（群 / 时间范围 / 关键词 / 身份；空 = 不限） */
   filter?: SharedFilter | null
