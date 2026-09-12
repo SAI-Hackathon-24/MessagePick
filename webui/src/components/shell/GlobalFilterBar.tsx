@@ -270,7 +270,12 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         )}
       </div>
 
-      {/* 身份（REQ-006：值取自 Me 标识、不提供手工输入；视角可切「我相关 / 全局」，默认全局） */}
+      {/*
+        身份（REQ-006）：**值**取自 API-002 的 Me 标识、不提供手工输入；
+        但「视角」可切「全局 / 我相关」，**默认全局**。
+        ⚠️ 此前无论视角一律把 meId 下发给后端，导致所有查询被隐式按身份过滤 ——
+        实测同一份数据：全局 209 个梗，带 identity=me 只剩 15 个。
+      */}
       <div className="relative" ref={identityRef}>
         <button
           type="button"

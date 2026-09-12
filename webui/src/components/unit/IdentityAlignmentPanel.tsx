@@ -10,7 +10,7 @@ import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { fmtMD } from '@/lib/format';
 import { ALIGNMENT_STATUS_LABEL, SOURCE_LABEL } from '@/types';
-import { Badge, Card, CardHeader, EmptyState, ErrorState, LoadingState, NoticeBar } from '@/components/ui';
+import { Badge, Card, CardHeader, EmptyState, ErrorState, LoadingState, NoticeBar , BuildingState } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 
 export function IdentityAlignmentPanel() {
@@ -22,6 +22,8 @@ export function IdentityAlignmentPanel() {
   };
 
   if (list.loading && !list.data) return <LoadingState label="正在读取身份对齐候选…" rows={2} />;
+  // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
+  if (list.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;
   if (list.error) return <ErrorState error={list.error} onRetry={list.refetch} />;
 
   return (

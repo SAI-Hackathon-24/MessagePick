@@ -132,12 +132,22 @@ export function createGroupMessagesAdapter(options: GroupMessagesOptions): Sourc
         const groupId = session.username
         if (doneGroups.has(groupId)) continue
         report({ phase: 'group', scope: groupId, processed: index, total: groups.length })
+        /**
+         * ⚠️ 完成判定必须把**写失败**也算进去。
+         * `write()` 把落库失败推进 `subFailures`，但 `collectGroup` 本身仍会正常返回；
+         * 若只看 `result.failure`，写失败的群会被记成「已完成」并**删掉断点**，
+         * 用户按来源重试时 `if (doneGroups.has(groupId)) continue` 直接跳过该群，
+         * 来源却报成功、`updatedUntilX` 照常推进 —— 数据永久缺失且重试无法补救。
+         */
+        const failuresBefore = subFailures.length
         const result = await collectGroup(session)
-        if (result.failure === undefined) {
+        const writeFailed = subFailures.length > failuresBefore
+        if (result.failure === undefined && !writeFailed) {
           doneGroups.add(groupId)
           delete offsets[groupId]
         } else {
-          subFailures.push(result.failure)
+          if (result.failure !== undefined) subFailures.push(result.failure)
+          // 保留断点：下次重试从该群的断点续采，而不是整群跳过
           offsets[groupId] = result.nextOffset ?? 0
         }
       }

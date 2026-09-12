@@ -9,12 +9,14 @@ import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
 import { num } from '@/lib/format';
-import { Card, CardHeader, ErrorState, LoadingState, MiniStat, ProgressBar } from '@/components/ui';
+import { Card, CardHeader, ErrorState, LoadingState, MiniStat, ProgressBar , BuildingState } from '@/components/ui';
 
 export function MyCompatibilityPanel() {
   const mine = useApi(() => api.myCompatibility(), []);
 
   if (mine.loading && !mine.data) return <LoadingState label="正在计算我的社交契合度…" rows={2} />;
+  // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
+  if (mine.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;
   if (mine.error) return <ErrorState error={mine.error} onRetry={mine.refetch} />;
   const d = mine.data;
   if (!d) return null;

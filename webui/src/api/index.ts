@@ -17,6 +17,7 @@
  * （不静默失败 —— REQ-016）。
  */
 import {
+  type AnalysisScopeView,
   type ApiEnvelope,
   type DataFlowNotice,
   type DeletePrecheck,
@@ -36,6 +37,8 @@ import {
   type MaterialConsent,
   type MaterialTier,
   type MemeCloudResult,
+  type MemeKingBoard,
+  type MemeYearbook,
   type MemeContext,
   type MemeUnit,
   type MemberInterestHint,
@@ -58,6 +61,7 @@ import {
   type UpdateStatus,
 } from '@/types';
 import { queryOf, request } from './client';
+import { deriveKingBoard, deriveYearbook, deriveYearbookTitle } from './derive';
 import {
   alignmentStatusOf,
   CORRECTION_REVERSE,
@@ -101,6 +105,7 @@ import {
   toUpdateStatus,
   zhDimension,
   zhPersonality,
+  groupNameOf,
 } from './map';
 
 /** 未接线 / 无后端数据源的入口：返回明确错误（不伪造数据；缺口清单见 webui/README.md）。 */
@@ -224,11 +229,135 @@ const DATA_FLOW_NOTICE: DataFlowNotice = {
   ],
 };
 
+/**
+ * 当前数据来源模式。
+ *
+ * repo 版只接真实后端（开发期替身已按 `REQ-019` 删除），因此恒为 `'http'`；
+ * 保留这个导出是为了让外壳的「开发期数据模式」横幅逻辑保持同源 —— 那条横幅在
+ * 真实后端下不会出现，但组件不必为模式判断分叉。
+ */
+export const apiMode = (): 'http' | 'mock' => 'http';
+
 /* -------------------------------------------------------------------------- */
 /* API：每个方法对应契约中的一条 API-###                                        */
 /* -------------------------------------------------------------------------- */
 export const api = {
   /* ================= MOD-001 数据接入与更新 ================= */
+
+  /**
+   * 梗王榜（**前端派生**，后端无该路由）。
+   * 口径见 `api/derive.ts`；只对热门前 10 个梗取详情。
+   */
+  async memeKingBoard(f: GlobalFilter): Promise<ApiEnvelope<MemeKingBoard>> {
+    const board = await deriveKingBoard(f, {
+      cloud: async (filter, limit) => {
+        const res = await this.memeCloud(filter, 'heat', 'cumulative');
+        if (!res.ok) throw Object.assign(new Error(res.error.message), { code: res.error.code });
+        return res.data.entries.slice(0, limit).map((e) => ({
+          memeId: e.memeId,
+          name: e.name,
+          occurrences: e.occurrences,
+          firstSeenAt: e.firstSeenAt,
+          lastUsedAt: e.lastUsedAt,
+        }));
+      },
+      unit: async (memeId) => {
+        const res = await this.memeUnit(memeId);
+        if (!res.ok) return null;
+        const u = res.data;
+        return {
+          king: { members: u.king.members, topUsers: u.king.topUsers },
+          highlights: u.highlights.map((h) => ({ messageId: h.messageId, senderName: h.senderName, text: h.text ?? '', sentAt: h.sentAt, kind: h.kind })),
+          monthly: u.monthly.map((b) => ({ month: b.month, count: b.count })),
+          activeDays: u.lifecycle.activeDays,
+        };
+      },
+      volume: async () => {
+        const res = await this.dataVolume();
+        return { messages: res.ok ? res.data.messages : 0 };
+      },
+      groupName: (groupId) => groupNameOf(groupId),
+    });
+    if (board.rows.length === 0) return invalid('当前筛选条件下没有可统计的梗', '可扩大时间范围或先执行一次分析。');
+    return { ok: true, data: board };
+  },
+
+  /** 梗年鉴（**前端派生**，后端无该路由）；一次取齐，翻页不再请求。 */
+  async memeYearbook(f: GlobalFilter): Promise<ApiEnvelope<MemeYearbook>> {
+    const data = await deriveYearbook(f, {
+      cloud: async (filter, limit) => {
+        const res = await this.memeCloud(filter, 'heat', 'cumulative');
+        if (!res.ok) throw Object.assign(new Error(res.error.message), { code: res.error.code });
+        return res.data.entries.slice(0, limit).map((e) => ({
+          memeId: e.memeId,
+          name: e.name,
+          occurrences: e.occurrences,
+          firstSeenAt: e.firstSeenAt,
+          lastUsedAt: e.lastUsedAt,
+        }));
+      },
+      unit: async (memeId) => {
+        const res = await this.memeUnit(memeId);
+        if (!res.ok) return null;
+        const u = res.data;
+        return {
+          king: { members: u.king.members, topUsers: u.king.topUsers },
+          highlights: u.highlights.map((h) => ({ messageId: h.messageId, senderName: h.senderName, text: h.text ?? '', sentAt: h.sentAt, kind: h.kind })),
+          monthly: u.monthly.map((b) => ({ month: b.month, count: b.count })),
+          activeDays: u.lifecycle.activeDays,
+        };
+      },
+      volume: async () => {
+        const res = await this.dataVolume();
+        return { messages: res.ok ? res.data.messages : 0 };
+      },
+      groupName: (groupId) => groupNameOf(groupId),
+    });
+    return { ok: true, data };
+  },
+
+  /** 群称号：前端确定性生成 + 本地缓存（不调用模型、不新增后端接口）。 */
+  async yearbookTitle(groupKey: string, topMemes: string[]): Promise<ApiEnvelope<{ title: string; cached: boolean }>> {
+    return { ok: true, data: deriveYearbookTitle(groupKey, topMemes) };
+  },
+
+  /**
+   * 读取分析范围（`GET /api/settings` 的 `ingest` 子集）。
+   *
+   * 产品口径：**导入只入库，不默认分析**。分析要对每个群逐人调用模型
+   * （实测 22 个群约 20 分钟），因此由使用者选定「待分析群」后再跑。
+   */
+  async analysisScope(): Promise<ApiEnvelope<AnalysisScopeView>> {
+    const res = await request<{ ingest?: { analysisGroupIds?: string[]; autoTriggerAfterIngest?: boolean } }>('GET', '/settings');
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      data: {
+        analysisGroupIds: res.data.ingest?.analysisGroupIds ?? [],
+        autoTriggerAfterIngest: res.data.ingest?.autoTriggerAfterIngest ?? true,
+      },
+    };
+  },
+
+  /**
+   * 写入「待分析群」（`PUT /api/settings`）。空数组 = 不分析任何群。
+   * 需要启动令牌（无令牌时服务端 403，界面应提示从应用入口重开页面）。
+   */
+  async setAnalysisGroups(groupIds: string[]): Promise<ApiEnvelope<AnalysisScopeView>> {
+    const res = await request<{ ingest?: { analysisGroupIds?: string[]; autoTriggerAfterIngest?: boolean } }>(
+      'PUT',
+      '/settings',
+      { body: { ingest: { analysisGroupIds: groupIds } } },
+    );
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      data: {
+        analysisGroupIds: res.data.ingest?.analysisGroupIds ?? [],
+        autoTriggerAfterIngest: res.data.ingest?.autoTriggerAfterIngest ?? true,
+      },
+    };
+  },
 
   /** API-002 查询更新状态：首屏引导与「记录更新至 X」（REQ-002、REQ-003） */
   async updateStatus(): Promise<ApiEnvelope<UpdateStatus>> {
@@ -246,7 +375,7 @@ export const api = {
 
   /** 群列表（DM-002）：全局筛选条的群多选项（REQ-004） */
   async groups(): Promise<ApiEnvelope<Group[]>> {
-    const res = await request<{ records: Array<{ groupId: string; groupName: string }> }>('GET', '/filter-options/groups', {
+    const res = await request<{ records: Array<{ groupId: string; groupName: string; messageCount?: number; lastMessageAt?: number | null }> }>('GET', '/filter-options/groups', {
       query: [
         ['page', '1'],
         ['pageSize', '1000'],

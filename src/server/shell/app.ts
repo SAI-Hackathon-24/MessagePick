@@ -158,7 +158,7 @@ export interface ShellAppOptions {
   port?: number
   /** 端口对象（模块已装配时整体注入；缺省 = 就地装配）。 */
   ports?: Partial<ShellPorts>
-  /** 静态页面目录；缺省 = `<仓库根>/dist/web`（`npm run build` 的产物）。 */
+  /** 静态页面目录；缺省 = `<仓库根>/webui/dist`（`npm run build` 的产物）。 */
   webDir?: string
 }
 
@@ -170,7 +170,7 @@ export interface ShellApp {
   dataDir: string
   ports: ShellPorts
   logger: ShellLogger
-  /** 页面产物是否存在（`dist/web/index.html`）。 */
+  /** 页面产物是否存在（`webui/dist/index.html`）。 */
   pageBuilt: boolean
   /** 监听后回填实际端口（守卫的 origin 集合随它变化）。 */
   setBoundPort(port: number): void
@@ -206,9 +206,9 @@ export function defaultDataDir(): string {
   return fileURLToPath(new URL('../../../data/', import.meta.url))
 }
 
-/** 前端构建产物目录（`npm run build` → `dist/web`）。 */
+/** 前端构建产物目录（`npm run build` → `webui/dist`）。 */
 export function defaultWebDir(): string {
-  return fileURLToPath(new URL('../../../dist/web/', import.meta.url))
+  return fileURLToPath(new URL('../../../webui/dist/', import.meta.url))
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +547,10 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         }
         only = onlyRaw
       }
+      if (tracker.hasActive('warmup')) {
+        res.status(GATE_STATUS).json(failure(metaOf(req), shellEnvelope('INVALID_INPUT', '已有分析正在进行', scope)))
+        return
+      }
       void runAnalysis('manual', groupIds, only)
       res.json(
         success(metaOf(req), {
@@ -563,7 +567,25 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     handle('filter-options:groups', (req, res) => {
       const offsetPage = pageRequestOf(req, 'filter-options:groups')
       const filter: SharedFilter | null = null // 群清单需要全量（删除范围选择与筛选条同源）；无筛选项 = 不限
-      res.json(success(metaOf(req), store.read('DM-002', filter, offsetPage)))
+      const page = store.read('DM-002', filter, offsetPage)
+      const activity = groupActivityOf(store)
+      const records = page.records
+        .map((row) => {
+          const stat = activity.get(row.groupId)
+          return {
+            ...row,
+            messageCount: stat?.messageCount ?? 0,
+            lastMessageAt: stat?.lastMessageAt ?? null,
+          }
+        })
+        // 最近活跃在前；无消息的群按群名兜底排序，保证结果稳定
+        .sort(
+          (left, right) =>
+            (right.lastMessageAt ?? 0) - (left.lastMessageAt ?? 0) ||
+            (right.messageCount - left.messageCount) ||
+            (left.groupName < right.groupName ? -1 : 1),
+        )
+      res.json(success(metaOf(req), { ...page, records }))
     }),
   )
 
@@ -1365,8 +1387,8 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     only: 'meme' | 'extract' | 'both' = 'both',
   ): Promise<void> {
     const scopeLabel = groupIds === null ? '全部' : `${groupIds.length} 个群`
-    const memeOp = only === 'extract' ? '' : tracker.start({ kind: 'warmup', scope: `梗分析（${scopeLabel}）` })
-    const extractOp = only === 'meme' ? '' : tracker.start({ kind: 'warmup', scope: `信息提取（${scopeLabel}）` })
+    const memeOp = only === 'extract' ? '' : tracker.start({ kind: 'warmup', scope: '梗分析' })
+    const extractOp = only === 'meme' ? '' : tracker.start({ kind: 'warmup', scope: '信息提取' })
     const memeRun = only === 'extract' ? Promise.resolve() : (async () => {
       try {
         const handle = meme.startBatch(cause, groupIds === null ? {} : { groupIds })
@@ -1438,7 +1460,48 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         tracker.update(extractOp, { state: 'failed', error: envelopeOfUnknown(error, 'analysis:extract') })
       }
     })()
-    await Promise.all([memeRun, extractRun])
+    /**
+     * MOD-007：无入参取数预热（触发该模块的懒构建与缓存）。
+     *
+     * ⚠️ 需要重试：该模块的索引快照在**构建阶段 8 才物化**，而预热与构建几乎同时发起
+     * （实测构建开始 573 ms 后就调用 `API-023`）→ 快照未建立、`me()` 为空 →
+     * `IDENTITY_NOT_READY`。这不是真失败。只对该错误码重试，其余立即收敛。
+     * 注意构建本身可能耗时数分钟（逐人模型调用），因此退避窗口要足够长（时间预算轮询）。
+     */
+    const socialRun = only === 'both' ? (async () => {
+      const id = tracker.start({ kind: 'warmup', scope: '社交画像' })
+      tracker.update(id, { state: 'running' })
+      /* 按群分析时先声明范围：社交索引按群增量构建（全量不自动触发） */
+      if (groupIds !== null && groupIds.length > 0) social.ensureIndex?.({ groupIds: [...groupIds] })
+      const budgetMs = 5 * 60_000
+      const intervalMs = 3_000
+      const deadline = Date.now() + budgetMs
+      let lastCode = ''
+      try {
+        for (;;) {
+          try {
+            await Promise.all([social.getMyAffinity(), social.listIdentityCandidates()])
+            tracker.update(id, { state: 'succeeded' })
+            return
+          } catch (error) {
+            lastCode = (error as { code?: string }).code ?? 'UNKNOWN'
+            if (lastCode !== 'IDENTITY_NOT_READY') throw error
+            if (Date.now() >= deadline) {
+              throw new Error(`等待社交索引就绪超时（${Math.round(budgetMs / 1000)}s，最后状态 ${lastCode}）`)
+            }
+            await new Promise((resolve) => setTimeout(resolve, intervalMs))
+          }
+        }
+      } catch (error) {
+        tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:social') })
+        logger.warn('warmup.failed', {
+          module: 'MOD-007',
+          code: lastCode,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    })() : Promise.resolve()
+    await Promise.all([memeRun, extractRun, socialRun])
   }
 
   /** 逐群提取（按群分析）：每群按全历史窗口重跑该群分片，聚合计数与失败；`opId` 供阶段进度归属。 */
@@ -1462,11 +1525,12 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       for (const groupId of groupIds) {
         const result = await extract.retry({ groupId, window })
         last = result
-        messages += result.counts.messages
-        recognized += result.counts.recognized
-        written += result.counts.written
-        extracted += result.counts.extracted
-        failedTasks += result.counts.failedTasks
+        /* counts 在替身 / 降级端口上可能缺省：一律按 0 计，不因可选字段缺省而中断整轮 */
+        messages += result.counts?.messages ?? 0
+        recognized += result.counts?.recognized ?? 0
+        written += result.counts?.written ?? 0
+        extracted += result.counts?.extracted ?? 0
+        failedTasks += result.counts?.failedTasks ?? 0
         failures.push(...result.failures)
       }
       const status: ExtractRunResult['status'] = failedTasks === 0 ? 'succeeded' : written > 0 || extracted > 0 ? 'partial' : 'failed'
@@ -1513,12 +1577,23 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         } else {
           respondFailure(req, res, outcome.error, 'update')
         }
-        // 后台分析（模块四 §4.5）：群消息采集成功且开启自动分析时触发；不等待、不阻塞响应
-        if (
-          config.ingest.autoTriggerAfterIngest &&
-          outcome.report.sources.some((source) => source.source === '群消息' && source.status === 'succeeded')
-        ) {
-          void runAnalysis('ingestDone', null)
+        // 后台分析（§4.5）：导入只入库、不默认分析 —— 仅「选了待分析群 + 群消息采集成功 + 开关开启」时触发；
+        // 后台发起、不阻塞本次响应，失败只收敛 warmup 操作状态
+        if (outcome.ok) {
+          const analysisGroupIds = config.ingest.analysisGroupIds
+          if (
+            config.ingest.autoTriggerAfterIngest &&
+            analysisGroupIds.length > 0 &&
+            outcome.report.sources.some((source) => source.source === '群消息' && source.status === 'succeeded')
+          ) {
+            void runAnalysis('ingestDone', [...analysisGroupIds])
+          } else {
+            logger.info('warmup.skipped', {
+              module: 'MOD-004',
+              reason: analysisGroupIds.length === 0 ? '未选择待分析群' : '本次采集无群消息更新或自动分析已关闭',
+              scope: 'MOD-005/006/007',
+            })
+          }
         }
       } catch (error) {
         tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'update') })
@@ -1740,13 +1815,41 @@ function ingestConfigOf(config: ShellConfig): {
   }
 }
 
+/**
+ * 现算每个群的消息数与最近消息时间（派生值，不落库）。
+ *
+ * ⚠️ 分页读尽：单页上限 1000，群消息量可达上万条 —— 只读首页会得到偏低的活跃度。
+ */
+function groupActivityOf(store: Store): Map<Id, { messageCount: number; lastMessageAt: number | null }> {
+  interface Row {
+    groupId: Id
+    sentAt: number
+  }
+  const stats = new Map<Id, { messageCount: number; lastMessageAt: number | null }>()
+  for (let page = 1; ; page += 1) {
+    const result = store.read('DM-003', null, { page, pageSize: 1000 })
+    for (const row of result.records as Row[]) {
+      const current = stats.get(row.groupId)
+      if (current === undefined) {
+        stats.set(row.groupId, { messageCount: 1, lastMessageAt: row.sentAt })
+      } else {
+        current.messageCount += 1
+        if (current.lastMessageAt === null || row.sentAt > current.lastMessageAt) current.lastMessageAt = row.sentAt
+      }
+    }
+    if (result.records.length === 0 || page * 1000 >= result.pageInfo.total) break
+  }
+  return stats
+}
+
 /** 引擎配置（详设 §7：`model.*` / `timeouts.modelCallMs` / `retry.maxAttempts`；立即可配项）。 */
 function applyEngineConfig(config: ShellConfig): void {
   configureEngine({
     model: {
       baseUrl: config.model.baseUrl,
-      name: config.model.name,
       apiKey: config.model.apiKey,
+      // ⚠️ 此前漏传 `name`：引擎侧始终是空串，模型调用必然抛「未配置模型名」
+      name: config.model.name,
       taskConcurrency: config.model.taskConcurrency,
     },
     timeouts: { modelCallMs: config.timeouts.modelCallMs },
@@ -1908,6 +2011,7 @@ function settingsPatchOf(req: Request): SettingsPatch {
     if (model['baseUrl'] !== undefined) next.baseUrl = bodyString(model, 'baseUrl', scope) ?? ''
     if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
     if (model['apiKey'] !== undefined) next.apiKey = bodyString(model, 'apiKey', scope) ?? ''
+    if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
     const concurrency = bodyInt(model, 'taskConcurrency', scope)
     if (concurrency !== null) {
       if (concurrency < 1 || concurrency > 8) {
@@ -1921,8 +2025,18 @@ function settingsPatchOf(req: Request): SettingsPatch {
   const ingestRaw = record['ingest']
   if (ingestRaw !== undefined && ingestRaw !== null) {
     const ingest = bodyRecord(ingestRaw, `${scope}.ingest`)
+    const nextIngest: NonNullable<SettingsPatch['ingest']> = {}
     const autoTrigger = bodyBoolean(ingest, 'autoTriggerAfterIngest', scope)
-    if (autoTrigger !== null) patch.ingest = { autoTriggerAfterIngest: autoTrigger }
+    if (autoTrigger !== null) nextIngest.autoTriggerAfterIngest = autoTrigger
+    // 待分析群（产品口径：空数组 = 不分析任何群）
+    const groupIdsRaw = ingest['analysisGroupIds']
+    if (groupIdsRaw !== undefined && groupIdsRaw !== null) {
+      if (!Array.isArray(groupIdsRaw)) throw invalidInput('ingest.analysisGroupIds 需为字符串数组', scope)
+      nextIngest.analysisGroupIds = [
+        ...new Set(groupIdsRaw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter((v) => v.length > 0)),
+      ]
+    }
+    if (Object.keys(nextIngest).length > 0) patch.ingest = nextIngest
   }
 
   const logRaw = record['log']
@@ -1943,9 +2057,13 @@ function applySettings(config: ShellConfig, patch: SettingsPatch): void {
   if (patch.model?.baseUrl !== undefined) config.model.baseUrl = patch.model.baseUrl
   if (patch.model?.name !== undefined) config.model.name = patch.model.name
   if (patch.model?.apiKey !== undefined) config.model.apiKey = patch.model.apiKey
+  if (patch.model?.name !== undefined) config.model.name = patch.model.name
   if (patch.model?.taskConcurrency !== undefined) config.model.taskConcurrency = patch.model.taskConcurrency
   if (patch.ingest?.autoTriggerAfterIngest !== undefined) {
     config.ingest.autoTriggerAfterIngest = patch.ingest.autoTriggerAfterIngest
+  }
+  if (patch.ingest?.analysisGroupIds !== undefined) {
+    config.ingest.analysisGroupIds = [...patch.ingest.analysisGroupIds]
   }
   if (patch.log?.level !== undefined) config.log.level = patch.log.level
 }

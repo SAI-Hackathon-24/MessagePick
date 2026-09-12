@@ -9,7 +9,7 @@ import { HeartHandshake } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { INTEREST_CATEGORIES, INTEREST_CATEGORY_LABEL, type InterestCategory } from '@/types';
-import { Badge, Card, ErrorState, LoadingState, NoticeBar } from '@/components/ui';
+import { Badge, Card, ErrorState, LoadingState, NoticeBar , BuildingState } from '@/components/ui';
 import { HobbyRadar } from '@/components/charts/Charts';
 
 export function PairMatchPanel({ aId, bId }: { aId: string; bId: string }) {
@@ -20,6 +20,8 @@ export function PairMatchPanel({ aId, bId }: { aId: string; bId: string }) {
   if (aId.length === 0 || bId.length === 0) return <NoticeBar tone="sky">请先选择两个成员。</NoticeBar>;
   if (aId === bId) return <NoticeBar tone="amber">请选择两个不同的人。</NoticeBar>;
   if (match.loading && !match.data) return <LoadingState label="正在计算契合度…" rows={2} />;
+  // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
+  if (match.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;
   if (match.error) return <ErrorState error={match.error} onRetry={match.refetch} className="!py-4" />;
   const m = match.data;
   if (!m) return null;

@@ -169,6 +169,67 @@ export function rememberTags(entries: readonly { tagId: string; name: string; ca
   for (const entry of entries) tagInfo.set(entry.tagId, { name: entry.name, category: entry.category });
 }
 
+/* -------------------------------------------------------------------------- */
+/* 本地改判记录（黑名单）                                                       */
+/* -------------------------------------------------------------------------- */
+/**
+ * 后端的改判标记随梗单元一起返回，但**没有**「列出我的全部改判」的查询接口。
+ * 界面需要一个「已改判记录」面板（查看 + 撤销），因此在本地留一份记录。
+ *
+ * 语义与使用者的要求一致：
+ *   · 改判先写本地记录 → 立即生效（各视图按本地标记处理）
+ *   · 本地记录即**黑名单**：后端模型下次总结时不会把这些条目改回去
+ *   · 持久化到 localStorage，刷新页面后仍然生效；撤销即删除记录
+ *
+ * 键名含 `mp:` 前缀，避免与其它本地数据冲突。
+ */
+const CORRECTION_STORE_KEY = 'mp:meme-corrections'
+
+export interface LocalCorrectionRecord {
+  memeId: string;
+  memeName: string;
+  mark: Exclude<CorrectionMark, 'none'>;
+  mergeTargetId?: string;
+  mergeTargetName?: string;
+  kingOverrideName?: string;
+  correctedAt: string;
+}
+
+const readStore = (): LocalCorrectionRecord[] => {
+  try {
+    const raw = globalThis.localStorage?.getItem(CORRECTION_STORE_KEY)
+    if (raw === null || raw === undefined) return []
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as LocalCorrectionRecord[]) : []
+  } catch {
+    // 隐私模式 / 配额满 / 脏数据：退化为「本次会话内有效」，不阻塞改判
+    return []
+  }
+}
+
+const writeStore = (rows: LocalCorrectionRecord[]): void => {
+  try {
+    globalThis.localStorage?.setItem(CORRECTION_STORE_KEY, JSON.stringify(rows))
+  } catch {
+    /* 写入失败不影响内存中的改判结果 */
+  }
+}
+
+/** 记录一次改判（同一条梗重复改判时覆盖旧记录）。 */
+export const rememberCorrection = (record: Omit<LocalCorrectionRecord, 'correctedAt'>): void => {
+  const rest = readStore().filter((r) => r.memeId !== record.memeId)
+  writeStore([{ ...record, correctedAt: new Date().toISOString() }, ...rest])
+}
+
+/** 撤销一条改判（删除本地记录）。 */
+export const forgetCorrection = (memeId: string): void => {
+  writeStore(readStore().filter((r) => r.memeId !== memeId))
+  correctionOf.delete(memeId)
+}
+
+/** 全部本地改判记录（最近的在前）。 */
+export const listCorrections = (): LocalCorrectionRecord[] => readStore()
+
 /** 群清单（一次拉取；失败不阻塞后续请求，展示名回落为标识）。 */
 export function ensureGroups(): Promise<Map<string, string>> {
   if (groupsPromise === null) {
@@ -588,9 +649,21 @@ function extractItemOf(view: WireExtractView): ExtractItem {
     groupId: view.groupId,
     groupName: groupNameOf(view.groupId),
     sentAt: iso(view.time),
-    // —— 契约 `API-014` 视图未含的展示字段：留空 / 默认（不伪造；详见 webui/README.md 的降级清单）
-    summaryLine: '',
+    /*
+     * 卡片主行必须显示**真实内容**。
+     *
+     * ⚠️ `API-014`（提取条目列表）的出参只有
+     * `{ entryId, recognitionType, timeElement, locationElement, personElementMemberIds,
+     *    subjectElement, deadline, groupId, time, topic, sourceMessageIds }`，
+     * **没有** `summaryLine` / `aiSummary`（那两件在 `API-015` 通知视图里）。
+     * 之前这里把 `summaryLine` 置空，界面上卡片主行就是一片空白 ——
+     * 看起来像「哪里都没有正确内容展示」，其实内容一直在 `subjectElement` 里。
+     * 现在按可用字段拼出主行：`主题 · 要素`（要素取 subjectElement，缺失时回落 topic）。
+     */
+    summaryLine: [view.topic, view.subjectElement].filter((v) => v !== null && v !== '').join(' · '),
+    // `API-014` 确实不提供 AI 摘要，留空并如实呈现（不伪造）
     aiSummary: '',
+    // 优先级与待办状态只在 `API-015`（通知视图）出参里；列表视图给中性默认，见 README 降级清单
     priority: 'medium',
     todoState: 'pending',
     remindState: 'no_remind',

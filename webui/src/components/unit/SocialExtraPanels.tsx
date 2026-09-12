@@ -11,12 +11,14 @@ import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { fmtMD } from '@/lib/format';
 import { INTEREST_CATEGORY_LABEL } from '@/types';
-import { Badge, Card, CardHeader, ErrorState, LoadingState, NoticeBar } from '@/components/ui';
+import { Badge, Card, CardHeader, ErrorState, LoadingState, NoticeBar , BuildingState } from '@/components/ui';
 import { InterestEventTimeline, RelationGraphChart } from '@/components/charts/Charts';
 
 export function RelationGraphPanel() {
   const graph = useApi(() => api.relationGraph(), []);
   if (graph.loading && !graph.data) return <LoadingState label="正在构建人-人关系图谱…" rows={2} />;
+  // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
+  if (graph.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;
   if (graph.error) return <ErrorState error={graph.error} onRetry={graph.refetch} />;
   const g = graph.data;
   if (!g) return null;
@@ -44,6 +46,8 @@ export function RelationGraphPanel() {
 export function InterestTimelinePanel() {
   const streams = useApi(() => api.interestEventStreams(), []);
   if (streams.loading && !streams.data) return <LoadingState label="正在读取兴趣事件流…" rows={2} />;
+  // 构建中（IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败）：改为等待提示
+  if (streams.error?.code === 'IDENTITY_NOT_READY') return <BuildingState />;
   if (streams.error) return <ErrorState error={streams.error} onRetry={streams.refetch} />;
 
   return (

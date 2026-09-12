@@ -269,11 +269,21 @@ export async function runStage3(env: StageEnv): Promise<StageOutcome> {
   const outcomes = await inPool(targets, BUILD_TASK_CONCURRENCY, ({ person, samples }) =>
     runTask(env, `3:${person.personId}`, extractionRequest(samples), `social.build.stage3:${person.personId}`),
   )
-  /* 结果合并按人员顺序串行进行：同一输入重复执行结果一致（§4 可重入） */
+  /* 结果合并按人员顺序串行进行：同一输入重复执行结果一致（§4 可重入）；
+     逐人模型调用耗时可观，每 50 人打一条进度日志，避免被误判为「卡死」 */
   for (let index = 0; index < targets.length; index += 1) {
     const target = targets[index]
     const outcome = outcomes[index]
     if (target === undefined || outcome === undefined) continue
+    if ((index + 1) % 50 === 0) {
+      env.logger.info?.('social.build.stage3.progress', {
+        module: 'MOD-007',
+        stage: 3,
+        done: index + 1,
+        total: targets.length,
+        failures: failures.length,
+      })
+    }
     if (!outcome.ok) {
       failures.push(outcome.failure)
       continue
@@ -395,10 +405,20 @@ export async function runStage6(env: StageEnv): Promise<StageOutcome> {
   const outcomes = await inPool(targets, BUILD_TASK_CONCURRENCY, ({ person, samples }) =>
     runTask(env, `6:${person.personId}`, personalityRequest(samples), `social.build.stage6:${person.personId}`),
   )
+  /* 同阶段 3：逐人模型调用耗时可观，每 50 人打一条进度日志 */
   for (let index = 0; index < targets.length; index += 1) {
     const target = targets[index]
     const outcome = outcomes[index]
     if (target === undefined || outcome === undefined) continue
+    if ((index + 1) % 50 === 0) {
+      env.logger.info?.('social.build.stage6.progress', {
+        module: 'MOD-007',
+        stage: 6,
+        done: index + 1,
+        total: targets.length,
+        failures: failures.length,
+      })
+    }
     if (!outcome.ok) {
       failures.push(outcome.failure)
       continue

@@ -25,10 +25,9 @@
     "paths": {
       "@shared": ["./src/shared/index.ts"],
       "@shared/*": ["./src/shared/*"],
-      "@server/*": ["./src/server/*"],
-      "@web/*": ["./src/web/*"]
+      "@server/*": ["./src/server/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

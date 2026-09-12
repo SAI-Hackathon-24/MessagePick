@@ -15,7 +15,12 @@
   - `docs/design/api-contract.md`、`docs/design/data-model.md`（契约层：接口与实体）
   - `docs/design/impl/mod-00*.md`（8 个模块的实现层设计，每个模块一份）
 
-> 主工程是**单包**结构（不使用 npm workspaces）：一个 `package.json`、一个 `tsconfig.json`，服务端（`src/server/`）与页面（`src/web/`）同包构建；另有独立前端包 `webui/`（自带 `package.json` / `package-lock.json`，不在主工程的类型检查与构建范围内）。
+> **结构**：单包（不使用 npm workspaces）——
+> 服务端 `src/server/` + 共享契约 `src/shared/` 在主工程内（一个 `package.json` / `tsconfig.json`）；
+> 浏览器界面是独立包 **`webui/`**（自带 `package.json` / `package-lock.json`，不在主工程类型检查范围内）。
+> 构建产物落在 `webui/dist/`，由服务进程托管。
+>
+> **想直接跑起来？看 [`docs/USAGE.md`](docs/USAGE.md)**（安装 → 采集 → 选群 → 分析 → 看结果）。
 
 ---
 
@@ -69,8 +74,7 @@ npm install
 | --- | --- | --- |
 | 开发（服务端） | `npm run dev:server` | `tsx watch src/server/main.ts`，改动自动重启 |
 | 开发（产品前端 `webui/`） | `cd webui && npm run dev` | `vite`，默认 <http://127.0.0.1:5273>；`/api`、`/media` 代理到服务进程（开发用，写操作请走完整流程） |
-| 开发（`src/web/` 旧实现） | `npm run dev:web` | `vite`，默认 <http://127.0.0.1:5173>；不参与构建 |
-| 完整应用 | `npm run build && npm start` | 先构建 `webui/` → `dist/web`，再由服务进程托管并打开**带启动令牌**的页面（同源，读写全功能） |
+| 完整应用 | `npm run build && npm start` | 先构建 `webui/` → `webui/dist`，再由服务进程托管并打开**带启动令牌**的页面（同源，读写全功能） |
 
 开发期代理目标默认 `http://127.0.0.1:8787`（见 `vite.config.ts`）。服务进程端口默认由应用数据目录的 `config.json` 的 `server.port` 决定（默认 `0` = 自动选空闲端口，详设 §7）；开发时请把 `server.port` 固定为 `8787`，或用环境变量 `MESSAGEPICK_SERVER_PORT` 覆盖代理目标端口。
 
@@ -122,11 +126,16 @@ npm run build       # 构建 webui/ → dist/web + tsc --noEmit（服务端类�
     │   └── main.ts                 #   入口：选端口 → 启服务 → 打开带令牌页面（MOD-004 已接线）
     │   # ingest/  store/  engine/  shell/  meme/  extract/  social/  regen/
     │   # ↑ 各模块目录（src/server/<模块>/）
-    └── web/                        # 浏览器页面（React + ECharts；旧实现，dev:web 可单独运行）
-        ├── index.html              #   vite 入口
-        ├── main.tsx                #   挂载点：接线 src/web/shell/（MOD-004 已接线）
-        # shell/  meme/  extract/  social/  regen/
-        # ↑ 各视图目录（src/web/<视图>/）
+    └── (服务端模块目录见上)
+
+webui/                              # 浏览器界面（独立包：React + ECharts + Tailwind）
+    ├── src/api/                    #   数据接入层：index（调用点）/ client（传输+令牌）/ map（契约换算）/ derive（派生）
+    ├── src/components/shell/       #   外壳：树形导航、页面壳、全局筛选、设置、待分析群选择器
+    ├── src/components/unit/        #   业务单元：梗单元抽屉、消息详情、各社交面板
+    ├── src/components/charts/      #   图表：词云、雷达、热力图、关系图谱
+    ├── src/pages/                  #   页面：总览 / 梗分析 / 信息提取 / 社交 / 梗王榜 / 梗年鉴
+    ├── scripts/                    #   自检：contract-probe（契约探针）、verify（界面探针）
+    └── dist/                       #   构建产物（由服务进程托管；已 gitignore）
 ```
 
 ### 模块 → 代码目录对照（详见各 `mod-###-<slug>.md` §3.1）
@@ -136,11 +145,11 @@ npm run build       # 构建 webui/ → dist/web + tsc --noEmit（服务端类�
 | `MOD-001` 数据接入与更新 | `src/server/ingest/` | — |
 | `MOD-002` 数据存储与隐私 | `src/server/store/` | — |
 | `MOD-003` 智能分析引擎 | `src/server/engine/` | — |
-| `MOD-004` 应用外壳与全局筛选 | `src/server/shell/` | `src/web/shell/` |
-| `MOD-005` 梗分析 | `src/server/meme/` | `src/web/meme/` |
-| `MOD-006` 信息提取 | `src/server/extract/` | `src/web/extract/` |
-| `MOD-007` 社交画像 | `src/server/social/` | `src/web/social/` |
-| `MOD-008` 再创作生成 | `src/server/regen/` | `src/web/regen/` |
+| `MOD-004` 应用外壳与全局筛选 | `src/server/shell/` | `webui/src/components/shell/` |
+| `MOD-005` 梗分析 | `src/server/meme/` | `webui/src/pages/MemePage.tsx` |
+| `MOD-006` 信息提取 | `src/server/extract/` | `webui/src/pages/ExtractPage.tsx` |
+| `MOD-007` 社交画像 | `src/server/social/` | `webui/src/pages/SocialPage.tsx` |
+| `MOD-008` 再创作生成 | `src/server/regen/` | `webui/src/components/unit/GeneratePanel.tsx` |
 
 模块间共享的**纯展示**组件与映射常量由 `MOD-004` 发布在 `src/shared/ui/present/`（mod-004 §8 决策 7）；该目录随实现波次创建。
 
@@ -151,7 +160,7 @@ npm run build       # 构建 webui/ → dist/web + tsc --noEmit（服务端类�
 1. **共享文件只由编排器修改**：
    `package.json`、`tsconfig.json`、`vite.config.ts`、`vitest.config.ts`、`src/shared/**`、根 `README.md`、`.gitignore`。
    模块负责人**不得**直接修改这些文件。
-2. **各模块只写自己目录**：`src/server/<模块>/`、`src/web/<模块>/`（对照上表）。不要写别的模块目录，也不要写 `docs/`（文档变更走 `design-doc-change` skill）。
+2. **各模块只写自己目录**：`src/server/<模块>/`、`webui/src/`（对照上表）。不要写别的模块目录，也不要写 `docs/`（文档变更走 `design-doc-change` skill）。
 3. **共享类型只从 `@shared` 导入**（`import type { ... } from '@shared'`）：不得在模块内复制第二份契约类型；模块内部 DTO 可以有自己的类型，但跨模块传递的入参 / 出参必须落在 `src/shared` 的类型上。
 4. **需要新依赖 → 向编排器申报**：不要在模块内新增依赖或改 `package.json`；编排器评估后统一钉版本。
 5. **需要改共享类型（新增字段 / 新枚举 / 新别名）→ 向编排器申报**：说明用途与文档依据（`docs/design/` 哪条），由编排器修改 `src/shared/**` 并广播给其余模块（避免 8 个模块各写一份）。
@@ -161,7 +170,7 @@ npm run build       # 构建 webui/ → dist/web + tsc --noEmit（服务端类�
 ### 入口接线（MOD-004 已落地）
 
 - `src/server/main.ts`：服务进程入口（`dev:server` / `start` 的入口）——已接线 `src/server/shell/app.ts`。
-- `src/web/index.html` + `src/web/main.tsx`：vite 入口与 React 根节点挂载——已接线 `src/web/shell/`。
+- `webui/index.html` + `webui/src/main.tsx`：vite 入口与 React 根节点挂载——已接线 `webui/src/components/shell/`。
 
 ## 共享契约类型（`src/shared/`）
 
@@ -209,9 +218,10 @@ npm run build       # 构建 webui/ → dist/web + tsc --noEmit（服务端类�
   `webui/` 不复制契约正文，只在 `webui/src/types.ts` 中做类型映射，并在 `webui/src/api/map.ts` 的适配层逐条对表
 - 已接线真实后端（2026-09-13）：数据一律走本机服务进程 HTTP（`webui/src/api/` 三层：`index` 调用点 / `client` 传输 + 令牌 / `map` 换算）；
   开发期替身（`fixtures.ts` / `mock.ts`）已按 `REQ-019` / `AC-010` 删除；降级清单见 [`webui/README.md`](webui/README.md)
-- 页面托管：`npm run build` 的产物进 `dist/web`，`npm start` 直接托管（同源 + 启动令牌，写操作全功能）；
-  单包内的 `src/web/` 保留源码（`npm run dev:web` 可单独运行），不再参与构建
-- 怎么跑、怎么自检见 [`webui/README.md`](webui/README.md)
+- 页面托管：`npm run build` 的产物进 `webui/dist`，`npm start` 直接托管（同源 + 启动令牌，写操作全功能）
+- 怎么跑见 [`docs/USAGE.md`](docs/USAGE.md)；前端的自检见 [`webui/README.md`](webui/README.md)
+- **只想看界面**（不采集、不配模型）：用同级的演示版目录 `../webui/`（独立于本仓库，内置演示数据，
+  默认 <http://127.0.0.1:5273>）—— 启动方式与两份界面的区分见 [`docs/USAGE.md`](docs/USAGE.md) §10
 
 ## 许可与版权
 

@@ -28,8 +28,13 @@ export default defineConfig({
     },
   },
   build: {
-    // 产物进仓库根 `dist/web`：`npm start` 由本机服务进程直接托管（同源 + 启动令牌）
-    outDir: '../dist/web',
+    /**
+     * 产物进 `webui/dist`。
+     * ⚠️ 必须与服务端 `defaultWebDir()`（`src/server/shell/app.ts` = `<仓库根>/webui/dist/`）
+     * 一致：服务端用 `existsSync(webui/dist/index.html)` 判定 `pageBuilt`，
+     * 目录不一致会导致 `npm run build && npm start` 后页面不被托管（表现为 404 兜底）。
+     */
+    outDir: 'dist',
     emptyOutDir: true,
   },
 });

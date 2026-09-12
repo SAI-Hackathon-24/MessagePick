@@ -238,6 +238,32 @@ export function joinPersonTagLinks(
   return joined
 }
 
+/**
+ * 成员索引：`memberId → 代表成员`。
+ *
+ * ⚠️ 真实数据里**同一个 memberId 会出现在多个群**（登录账号 `me` 在 22 个群里
+ * 各有一条 DM-004；实测 4035 条成员只有 3100 个不同 memberId）。
+ * 直接用 `new Map(成员.map(m => [m.memberId, m]))` 会让后写覆盖先写：
+ *   · 映射塌缩（4035 → 3100）；
+ *   · `/me/fit` 的 `index.me()` 取到的那条恰好是 `isMe=false` 的群成员
+ *     → `findMe()` 返回 undefined → `API-023`/`API-025` 永远 `IDENTITY_NOT_READY`
+ *     → 社交模块整体不可用。
+ *
+ * 该映射的消费方只需要**单条代表记录**（`isMe` 判定、`displayNameOf` 取昵称），
+ * 因此这里按确定规则挑代表：**优先 `isMe = true` 的记录**，
+ * 其次首次出现者（与数据顺序无关的稳定结果）。
+ */
+export function indexMembersById(members: readonly GroupMember[]): Map<Id, GroupMember> {
+  const map = new Map<Id, GroupMember>()
+  for (const member of members) {
+    const existing = map.get(member.memberId)
+    if (existing === undefined || (!existing.isMe && member.isMe)) {
+      map.set(member.memberId, member)
+    }
+  }
+  return map
+}
+
 /** 物化索引快照（构建阶段 8；全部经 `API-004` 分页读回）。 */
 export function buildIndexSnapshot(port: SocialStorePort, epoch: number, builtAt: number): SocialIndexSnapshot {
   const members = readAll(port, 'DM-004')
@@ -259,7 +285,7 @@ export function buildIndexSnapshot(port: SocialStorePort, epoch: number, builtAt
     personById: new Map(persons.map((person) => [person.personId, person])),
     personByMember: new Map(),
     members,
-    memberById: new Map(members.map((member) => [member.memberId, member])),
+    memberById: indexMembersById(members),
     tags,
     tagById: new Map(tags.map((tag) => [tag.tagId, tag])),
     links: joinPersonTagLinks(tags, personTags),

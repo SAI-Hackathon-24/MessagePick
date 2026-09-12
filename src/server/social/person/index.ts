@@ -25,21 +25,71 @@ export interface PersonSyncResult {
   personByMember: Map<Id, Id>
 }
 
-/** 由群成员身份同步出人集合（归属以 `DM-004.person_id` 为准，§5.1）。 */
+/** 由群成员身份与已确认映射同步出人集合（归属以 `DM-004.person_id` 为准，§5.1）。 */
 export function syncPeople(input: PersonSyncInput): PersonSyncResult {
-  const buckets = new Map<Id, GroupMember[]>()
+  const parent = new Map<Id, Id>()
+  const find = (memberId: Id): Id => {
+    let root = memberId
+    while (parent.get(root) !== undefined && parent.get(root) !== root) {
+      root = parent.get(root) as Id
+    }
+    return root
+  }
+  /**
+   * 并查集合并（按成员标识操作）。根只用于**分组**，最终人标识另按成员记录上的
+   * `personId` 最小值确定（见下），因此这里的根取值不影响对外标识。
+   */
+  const union = (left: Id, right: Id): void => {
+    const rootLeft = find(left)
+    const rootRight = find(right)
+    if (rootLeft === rootRight) return
+    if (rootLeft < rootRight) parent.set(rootRight, rootLeft)
+    else parent.set(rootLeft, rootRight)
+  }
+
   for (const member of input.members) {
-    // 归属解析：成员的 `DM-004.person_id`（默认一人 = 一个群成员；确认合并由存储侧生效）
+    if (!parent.has(member.memberId)) parent.set(member.memberId, member.memberId)
+  }
+  /* 已确认候选：合并成员（存储侧尚未重指 personId 时的兼容口径） */
+  for (const candidate of input.candidates) {
+    if (candidate.status !== '已确认') continue
+    const [first, ...rest] = candidate.memberIds
+    if (first === undefined) continue
+    for (const memberId of rest) {
+      if (!parent.has(memberId)) parent.set(memberId, memberId)
+      if (!parent.has(first)) parent.set(first, first)
+      union(first, memberId)
+    }
+  }
+  /* 存储侧重指：同一 personId 的成员天然是同一人（投影口径；兼容确认合并后的库） */
+  const firstMemberOfPerson = new Map<Id, Id>()
+  for (const member of input.members) {
     const personId = member.personId === '' ? member.memberId : member.personId
-    const bucket = buckets.get(personId)
-    if (bucket === undefined) buckets.set(personId, [member])
+    const first = firstMemberOfPerson.get(personId)
+    if (first === undefined) firstMemberOfPerson.set(personId, member.memberId)
+    else union(first, member.memberId)
+  }
+
+  const memberByRoot = new Map<Id, GroupMember[]>()
+  for (const member of input.members) {
+    const root = find(member.memberId)
+    const bucket = memberByRoot.get(root)
+    if (bucket === undefined) memberByRoot.set(root, [member])
     else bucket.push(member)
   }
 
   const persons: Person[] = []
   const personByMember = new Map<Id, Id>()
-  for (const [personId, members] of buckets) {
+  for (const [root, members] of memberByRoot) {
     const memberIds = members.map((member) => member.memberId).sort()
+    /**
+     * 人标识 = 组内成员 `personId` 的最小值（MOD-002 的结构绑定口径；空值回落成员标识）。
+     * 取最小是为了让「已确认合并」的结果与成员顺序无关、可幂等重放；不自行造新标识。
+     */
+    const personIds = members
+      .map((member) => (member.personId === '' ? member.memberId : member.personId))
+      .sort()
+    const personId = personIds[0] ?? root
     persons.push({
       personId,
       memberIds,

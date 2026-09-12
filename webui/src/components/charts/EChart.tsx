@@ -28,11 +28,20 @@ async function loadECharts() {
         charts.RadarChart,
         charts.GraphChart,
         charts.ScatterChart,
+        // 梗生命周期视图用热力图。⚠️ 未注册的系列类型 ECharts 不报错、只是不绘制，
+        // 表现为「行名与月份轴都在、格子却是空的」——排查成本极高，务必逐一核对。
+        charts.HeatmapChart,
         components.GridComponent,
         components.TooltipComponent,
         components.LegendComponent,
         components.AriaComponent,
         components.TitleComponent,
+        // 以下是「漏注册会静默变形」的组件（均已在实践中踩过）：
+        // · VisualMapComponent —— 热力图给单元格上色
+        // · GraphicComponent   —— 图内标注
+        components.VisualMapComponent,
+        components.GraphicComponent,
+        components.MarkLineComponent,
         renderers.CanvasRenderer,
       ]);
       return core;

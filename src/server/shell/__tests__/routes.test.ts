@@ -426,9 +426,9 @@ describe('写路由（令牌守卫与入参校验）', () => {
     expect(view.model['name']).toBe('test-model')
   })
 
-  it('POST /api/update：开启自动分析时群消息采集成功 → 后台触发分析（登记两条操作）', async () => {
-    // 自动分析默认关：先显式开启（旧行为开关）
-    await write('PUT', '/api/settings', { ingest: { autoTriggerAfterIngest: true } })
+  it('POST /api/update：选了待分析群 + 群消息采集成功 → 后台触发分析（登记三条操作）', async () => {
+    // 产品口径：导入只入库；选了「待分析群」后才会在更新完成后自动分析（§4.5）
+    await write('PUT', '/api/settings', { ingest: { autoTriggerAfterIngest: true, analysisGroupIds: ['g1'] } })
     seen['memeBatch'] = undefined
     seen['extractRun'] = undefined
     ingestOutcome = {
@@ -442,10 +442,11 @@ describe('写路由（令牌守卫与入参校验）', () => {
       const payload = await jsonOf(await get('/api/operations'))
       const operations = (payload['data'] as { operations: { kind: string; state: string }[] }).operations
       const warmups = operations.filter((operation) => operation.kind === 'warmup')
-      return warmups.length === 2 && warmups.every((operation) => operation.state === 'succeeded')
+      return warmups.length === 3 && warmups.every((operation) => operation.state === 'succeeded')
     })
     expect(seen['memeBatch']).toBe('ingestDone')
-    expect(seen['extractRun']).toBe(true)
+    // 按群触发 → 提取走逐群重跑（retry 路径），而不是全量 run()
+    expect(seen['extractRetry']).toEqual({ groupId: 'g1', window: { from: 0, to: expect.any(Number) } })
   })
 
   it('POST /api/update：仅通讯录成功（群消息未成功）→ 不触发分析', async () => {
