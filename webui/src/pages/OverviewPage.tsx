@@ -5,17 +5,18 @@
  * 三模块并列交付、互不依赖：本页任一块失败都不影响其它块（AC-040、REQ-016）。
  */
 import { Link } from 'react-router-dom';
-import { AlarmClock, ArrowUpRight, BarChart3, Flame, HeartHandshake, MessageSquareText, Sparkles, Users } from 'lucide-react';
+import { AlarmClock, ArrowUpRight, BarChart3, Cpu, Flame, HeartHandshake, MessageSquareText, Sparkles, Users } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
 import { fmtMD, num } from '@/lib/format';
 import { INTEREST_CATEGORY_LABEL, MEME_TYPE_LABEL, PRIORITY_LABEL } from '@/types';
-import { Card, CardHeader, ErrorState, LoadingState, SectionHeading, Stat } from '@/components/ui';
+import { Card, CardHeader, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
+import { Button } from '@/components/shell/Button';
 import { HourBars } from '@/components/charts/Charts';
 
 export default function OverviewPage() {
-  const { filter, clearFilter, groups } = useAppState();
+  const { filter, clearFilter, groups, setSettingsOpen } = useAppState();
   const volume = useApi(() => api.dataVolume(), []);
   const cloud = useApi(() => api.memeCloud(filter, 'heat', 'cumulative'), [JSON.stringify(filter)]);
   const extracts = useApi(() => api.extractItems(filter, 1, 10), [JSON.stringify(filter)]);
@@ -23,6 +24,11 @@ export default function OverviewPage() {
   // 注：不自动调用社交接口（/me/fit 等）—— 避免打开应用即触发社交全量构建（含模型任务）；
   // 社交画像改为进入「正向 / 反向社交」页时按需构建。
   const scores = useApi(() => api.interestScoreCards(), []);
+  /* 模型服务未配置 → 页面顶部常驻提醒（配好后自动消失）：三个模块的分析都依赖它 */
+  const settings = useApi(() => api.settings(), []);
+  const cfgModel = settings.data?.model;
+  const modelMissing =
+    cfgModel !== undefined && !(cfgModel.baseUrl.length > 0 && cfgModel.name.length > 0 && cfgModel.apiKeyConfigured);
 
   const memes = cloud.data?.entries ?? [];
   const items = extracts.data?.items ?? [];
@@ -30,6 +36,16 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-6">
+      {modelMissing && (
+        <NoticeBar tone="coral" className="flex flex-wrap items-center gap-3" data-testid="model-missing-banner">
+          <Cpu size={14} className="shrink-0" />
+          <span className="font-medium">模型服务尚未配置</span>
+          <span className="mp-meta">梗分析 / 信息提取 / 社交画像都依赖模型（采集不受影响）；未配置前这三个模块不会产出结果。</span>
+          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setSettingsOpen(true)}>
+            去配置模型服务
+          </Button>
+        </NoticeBar>
+      )}
       {/* 关键指标 */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="已采集消息" value={num(volume.data?.messages ?? 0)} unit="条" hint={`覆盖 ${volume.data?.groups ?? 0} 个群`} icon={MessageSquareText} />

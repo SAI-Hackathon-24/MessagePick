@@ -16,7 +16,7 @@ import { KEYWORD_SCOPE } from '@/types';
 import { Badge, Chip } from '@/components/ui';
 
 export function GlobalFilterBar({ meName }: { meName?: string }) {
-  const { filter, setFilter, clearFilter, groups, setModule, identityMode, setIdentityMode, status } = useAppState();
+  const { filter, setFilter, clearFilter, groups, setModule, identityMode, setIdentityMode, status, setSettingsOpen } = useAppState();
   const [openGroups, setOpenGroups] = useState(false);
   const [openTime, setOpenTime] = useState(false);
   const [openIdentity, setOpenIdentity] = useState(false);
@@ -54,6 +54,17 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
     setAnalyzing(true);
     setAnalyzeMsg(null);
     setAnalysisChip('idle');
+    /* 前置检查：模型服务未配置时三个模块的分析必然失败——直接引导去配置，
+       不发起注定失败的任务（服务端仍保留 MODEL_NOT_CONFIGURED 兜底） */
+    const cfgRes = await api.settings();
+    const cfgModel = cfgRes.ok ? cfgRes.data.model : null;
+    const modelReady = cfgModel === null || (cfgModel.baseUrl.length > 0 && cfgModel.name.length > 0 && cfgModel.apiKeyConfigured);
+    if (!modelReady) {
+      setAnalyzing(false);
+      setAnalyzeMsg('尚未配置模型服务：梗分析 / 信息提取 / 社交画像的 AI 任务都需要它（已为你打开设置）');
+      setSettingsOpen(true);
+      return;
+    }
     const res = await api.analyze(filter.groupIds);
     setAnalyzing(false);
     if (!res.ok || !res.data) {
