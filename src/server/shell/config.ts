@@ -68,8 +68,20 @@ export interface ShellConfig {
   ingest: {
     /** 采集分页大小（下次采集生效） */
     pageSize: number
-    /** 采集完成后自动触发分析（HLD 决策 9） */
+    /**
+     * 采集完成后自动触发分析（HLD 决策 9）。
+     * ⚠️ 仅当 `analysisGroupIds` 非空时才真正发起分析 —— 见该字段说明。
+     */
     autoTriggerAfterIngest: boolean
+    /**
+     * 待分析群（`groupId` 列表）。
+     *
+     * 产品口径（本次变更）：**导入只负责入库，不默认全量分析**。
+     * 分析（梗识别 / 抽取 / 画像）要为每个群逐人调用模型，真实数据下可达
+     * 上千次调用、耗时以十分钟计；因此默认**不分析任何群**，由使用者在界面上
+     * 自行选择要看哪些群。空数组 = 不自动分析（仅入库）。
+     */
+    analysisGroupIds: string[]
   }
 }
 
@@ -81,13 +93,13 @@ export const DEFAULT_CONFIG: ShellConfig = {
   timeouts: { cliCommandMs: 120_000, modelCallMs: 90_000, renderMs: 30_000 },
   retry: { maxAttempts: 3 },
   log: { level: 'info', retentionDays: 7 },
-  ingest: { pageSize: 1_000, autoTriggerAfterIngest: true },
+  ingest: { pageSize: 1_000, autoTriggerAfterIngest: true, analysisGroupIds: [] },
 }
 
 /** 可提交的设置补丁（只含使用者可改项；页面 `SettingsPatch` 的同源结构）。 */
 export interface SettingsPatch {
   model?: { baseUrl?: string; apiKey?: string; name?: string; taskConcurrency?: number }
-  ingest?: { autoTriggerAfterIngest?: boolean }
+  ingest?: { autoTriggerAfterIngest?: boolean; analysisGroupIds?: string[] }
   log?: { level?: ShellLogLevel }
 }
 
@@ -120,6 +132,20 @@ function stringValue(raw: unknown, fallback: string, path: string, issues: strin
     return fallback
   }
   return raw
+}
+
+/** 字符串数组取值：非数组按默认值并记问题；去空白、去空串、去重。 */
+function stringListValue(value: unknown, fallback: readonly string[], field: string, issues: string[]): string[] {
+  if (value === undefined) return [...fallback]
+  if (!Array.isArray(value)) {
+    issues.push(`${field} 需为字符串数组`)
+    return [...fallback]
+  }
+  const items = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  return [...new Set(items)]
 }
 
 function intValue(
@@ -238,6 +264,7 @@ export function normalizeConfig(raw: unknown): { config: ShellConfig; issues: st
         }),
       },
       ingest: {
+        analysisGroupIds: stringListValue(ingest['analysisGroupIds'], DEFAULT_CONFIG.ingest.analysisGroupIds, 'ingest.analysisGroupIds', issues),
         pageSize: intValue(ingest['pageSize'], DEFAULT_CONFIG.ingest.pageSize, 'ingest.pageSize', issues, { min: 1 }),
         autoTriggerAfterIngest: boolValue(
           ingest['autoTriggerAfterIngest'],
@@ -302,7 +329,7 @@ export function saveConfig(dataDir: string, config: ShellConfig): void {
 /** 设置页只读视图（凭据只给「是否已配置」；详设 §4.3）。 */
 export interface SettingsView {
   model: { baseUrl: string; apiKeyConfigured: boolean; name: string; taskConcurrency: number }
-  ingest: { autoTriggerAfterIngest: boolean; pageSize: number }
+  ingest: { autoTriggerAfterIngest: boolean; pageSize: number; analysisGroupIds: string[] }
   cli: { executable: string; stateDir: string }
   server: { port: number }
   log: { level: ShellLogLevel; retentionDays: number }
@@ -319,7 +346,11 @@ export function settingsViewOf(config: ShellConfig): SettingsView {
       name: config.model.name,
       taskConcurrency: config.model.taskConcurrency,
     },
-    ingest: { autoTriggerAfterIngest: config.ingest.autoTriggerAfterIngest, pageSize: config.ingest.pageSize },
+    ingest: {
+      autoTriggerAfterIngest: config.ingest.autoTriggerAfterIngest,
+      pageSize: config.ingest.pageSize,
+      analysisGroupIds: [...config.ingest.analysisGroupIds],
+    },
     cli: { executable: config.cli.executable, stateDir: config.cli.stateDir },
     server: { port: config.server.port },
     log: { level: config.log.level, retentionDays: config.log.retentionDays },

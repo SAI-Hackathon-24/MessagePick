@@ -499,13 +499,40 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
-  // API-004（实体类型 = 群）群清单读路径（直通；群标识 + 群名，CHG-026）
+  /**
+   * API-004（实体类型 = 群）群清单读路径；群标识 + 群名，CHG-026。
+   *
+   * 本次变更：额外给出每个群的**活跃度**（消息数 + 最近消息时间），并**按最近活跃倒序**返回，
+   * 让界面能把最活跃的群排在前面（新产品口径：导入不默认全量分析，由使用者选群；
+   * 默认勾选「最近活跃的前几个」比让使用者从几十个群里翻要合理）。
+   *
+   * 注意：`Group`（DM-002）只有标识与名称，活跃度是从 DM-003 现算的派生值，
+   * 不落库、不改契约字段。
+   */
   app.get(
     '/api/filter-options/groups',
     handle('filter-options:groups', (req, res) => {
       const offsetPage = pageRequestOf(req, 'filter-options:groups')
       const filter: SharedFilter | null = null // 群清单需要全量（删除范围选择与筛选条同源）；无筛选项 = 不限
-      res.json(success(metaOf(req), store.read('DM-002', filter, offsetPage)))
+      const page = store.read('DM-002', filter, offsetPage)
+      const activity = groupActivityOf(store)
+      const records = page.records
+        .map((row) => {
+          const stat = activity.get(row.groupId)
+          return {
+            ...row,
+            messageCount: stat?.messageCount ?? 0,
+            lastMessageAt: stat?.lastMessageAt ?? null,
+          }
+        })
+        // 最近活跃在前；无消息的群按群名兜底排序，保证结果稳定
+        .sort(
+          (left, right) =>
+            (right.lastMessageAt ?? 0) - (left.lastMessageAt ?? 0) ||
+            (right.messageCount - left.messageCount) ||
+            (left.groupName < right.groupName ? -1 : 1),
+        )
+      res.json(success(metaOf(req), { ...page, records }))
     }),
   )
 
@@ -1044,6 +1071,25 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   function runWarmup(): void {
     if (!config.ingest.autoTriggerAfterIngest) return
 
+    /**
+     * 产品口径（本次变更）：**导入只入库，不默认全量分析**。
+     *
+     * 分析（梗识别 / 抽取 / 画像）要为每个群逐人调用模型：实测 22 个群时阶段 3
+     * 需 997 次调用、约 20 分钟。默认对全部群开跑会让「点一下更新」变成长时间
+     * 无响应的黑盒。因此：
+     *   · `ingest.analysisGroupIds` 为空 → **不发起任何分析**，只完成入库；
+     *   · 非空 → 只对选定的群发起分析（界面上的「待分析群」，可多选）。
+     * 界面上由使用者选择要看哪些群；服务端只负责按选择执行。
+     */
+    const analysisGroupIds = config.ingest.analysisGroupIds
+    if (analysisGroupIds.length === 0) {
+      logger.info('warmup.skipped', { module: 'MOD-004', reason: '未选择待分析群', scope: 'MOD-005/006/007' })
+      return
+    }
+    /** 传给模块的群范围（`ScopeFilter` = `SharedFilter`）：空数组等于不限，因此这里必然非空。 */
+    const scope: SharedFilter = { groupIds: [...analysisGroupIds] }
+    logger.info('warmup.scope', { module: 'MOD-004', groups: analysisGroupIds.length })
+
     const warm = (moduleId: string, task: () => Promise<unknown>, settle: (value: unknown) => { state: ShellOperation['state']; error?: ErrorEnvelope }): void => {
       const id = tracker.start({ kind: 'warmup', scope: moduleId })
       tracker.update(id, { state: 'running' })
@@ -1065,8 +1111,8 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         })
     }
 
-    // MOD-005：后台批量生成梗（scope 取空 = 不限）
-    warm('MOD-005', () => Promise.resolve(meme.startBatch('ingestDone')), () => ({ state: 'succeeded' }))
+    // MOD-005：后台批量生成梗（仅选定群）
+    warm('MOD-005', () => Promise.resolve(meme.startBatch('ingestDone', scope)), () => ({ state: 'succeeded' }))
 
     /**
      * MOD-006：抽取一批。
@@ -1356,6 +1402,33 @@ function ingestConfigOf(config: ShellConfig): {
     cliExecutable: config.cli.executable,
     cliStateDir: config.cli.stateDir,
   }
+}
+
+/**
+ * 现算每个群的消息数与最近消息时间（派生值，不落库）。
+ *
+ * ⚠️ 分页读尽：单页上限 1000，群消息量可达上万条 —— 只读首页会得到偏低的活跃度。
+ */
+function groupActivityOf(store: Store): Map<Id, { messageCount: number; lastMessageAt: number | null }> {
+  interface Row {
+    groupId: Id
+    sentAt: number
+  }
+  const stats = new Map<Id, { messageCount: number; lastMessageAt: number | null }>()
+  for (let page = 1; ; page += 1) {
+    const result = store.read('DM-003', null, { page, pageSize: 1000 })
+    for (const row of result.records as Row[]) {
+      const current = stats.get(row.groupId)
+      if (current === undefined) {
+        stats.set(row.groupId, { messageCount: 1, lastMessageAt: row.sentAt })
+      } else {
+        current.messageCount += 1
+        if (current.lastMessageAt === null || row.sentAt > current.lastMessageAt) current.lastMessageAt = row.sentAt
+      }
+    }
+    if (result.records.length === 0 || page * 1000 >= result.pageInfo.total) break
+  }
+  return stats
 }
 
 /** 引擎配置（详设 §7：`model.*` / `timeouts.modelCallMs` / `retry.maxAttempts`；立即可配项）。 */

@@ -10,7 +10,7 @@
  * 本文件用替身端口把「预热是否真的被发起」钉死：断言调用发生、调用参数正确、
  * 操作被登记为 `kind='warmup'`、开关关闭时不触发、预热失败不影响 update 响应。
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -122,7 +122,28 @@ const waitForWarmup = async (count = 3, tries = 40): Promise<Record<string, unkn
   return []
 }
 
+/**
+ * 写入配置：本文件验证「选了待分析群时预热按群发起」。
+ * 产品口径要求 `ingest.analysisGroupIds` 非空才会分析（见下一条用例）。
+ */
+function writeConfig(dataDir: string, analysisGroupIds: string[]): void {
+  writeFileSync(
+    join(dataDir, 'config.json'),
+    JSON.stringify({
+      model: { baseUrl: '', apiKey: '', name: '', taskConcurrency: 4 },
+      cli: { executable: '', stateDir: '' },
+      server: { port: 0 },
+      timeouts: { cliCommandMs: 120_000, modelCallMs: 90_000, renderMs: 30_000 },
+      retry: { maxAttempts: 3 },
+      log: { level: 'info', retentionDays: 7 },
+      ingest: { pageSize: 1000, autoTriggerAfterIngest: true, analysisGroupIds },
+    }),
+    { mode: 0o600 },
+  )
+}
+
 beforeAll(async () => {
+  writeConfig(dataDir, ['g1@chatroom', 'g2@chatroom'])
   shell = createShellApp({
     dataDir,
     token: TOKEN,
@@ -158,9 +179,13 @@ describe('采集完成后的预热（§4.5）', () => {
     const warmups = await waitForWarmup(3)
     expect(warmups.length).toBeGreaterThanOrEqual(3)
 
-    // MOD-005：后台批量生成梗，cause 必须是 'ingestDone'
+    // MOD-005：后台批量生成梗，cause 必须是 'ingestDone'，且**只针对选定的群**
     expect(calls.startBatch.length).toBeGreaterThan(0)
     expect(calls.startBatch[0]).toMatchObject({ cause: 'ingestDone' })
+    expect((calls.startBatch[0] as { scope?: { groupIds?: string[] } }).scope?.groupIds).toEqual([
+      'g1@chatroom',
+      'g2@chatroom',
+    ])
 
     /**
      * MOD-006：**不带窗口**调用，窗口由该模块按自己的增量水位推导。
@@ -178,6 +203,43 @@ describe('采集完成后的预热（§4.5）', () => {
     expect(scopes).toContain('MOD-005')
     expect(scopes).toContain('MOD-006')
     expect(scopes).toContain('MOD-007')
+  })
+
+  it('未选择待分析群时**不发起任何分析**（导入只入库）', async () => {
+    // 另起一个实例：配置里 analysisGroupIds 为空
+    const emptyDir = mkdtempSync(join(tmpdir(), 'messagepick-warmup-none-'))
+    writeConfig(emptyDir, [])
+    calls.startBatch.length = 0
+    calls.extractRun.length = 0
+    const before = { fit: calls.fit, candidates: calls.candidates }
+
+    const bare = createShellApp({
+      dataDir: emptyDir,
+      token: TOKEN,
+      logger: { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined },
+      ports: { ingest: fakeIngest, extract: fakeExtract, meme: fakeMeme, social: fakeSocial },
+    })
+    const server2 = bare.app.listen(0, '127.0.0.1')
+    await new Promise<void>((resolve) => server2.once('listening', () => resolve()))
+    const addr = server2.address() as AddressInfo
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/update`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-mp-token': TOKEN },
+        body: '{}',
+      })
+      expect(res.status).toBe(200)
+      // 给后台留出误触发的时间窗
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(calls.startBatch).toHaveLength(0)
+      expect(calls.extractRun).toHaveLength(0)
+      expect(calls.fit).toBe(before.fit)
+      expect(calls.candidates).toBe(before.candidates)
+    } finally {
+      server2.closeAllConnections()
+      server2.close()
+      rmSync(emptyDir, { recursive: true, force: true })
+    }
   })
 
   it('预热失败不阻塞 update 响应，且操作状态收敛为 failed', async () => {
