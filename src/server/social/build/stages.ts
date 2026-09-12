@@ -238,11 +238,26 @@ export async function runStage3(env: StageEnv): Promise<StageOutcome> {
   let dropped = 0
   let tasks = 0
 
+  /**
+   * 阶段 3 是逐人一次模型调用，真实数据下规模可达上千次（实测 997 次）。
+   * 全程无输出会让人误判为「卡死」，因此每 50 个任务打一条进度日志。
+   */
+  let scanned = 0
   for (const person of env.workspace.persons) {
     if (person.unknown) continue // 未知成员不进入抽取任务输入（决策 4）
     const samples = sampleMessagesOf(person, env.workspace.messages)
     if (samples.length === 0) continue
     tasks += 1
+    scanned += 1
+    if (scanned % 50 === 0) {
+      env.logger.info?.('social.build.stage3.progress', {
+        module: 'MOD-007',
+        stage: 3,
+        done: scanned,
+        total: env.workspace.persons.length,
+        failures: failures.length,
+      })
+    }
     const scope = `social.build.stage3:${person.personId}`
     const outcome = await runTask(env, `3:${person.personId}`, extractionRequest(samples), scope)
     if (!outcome.ok) {
@@ -359,11 +374,23 @@ export async function runStage6(env: StageEnv): Promise<StageOutcome> {
   let tasks = 0
   let dropped = 0
 
+  /** 与阶段 3 同理：逐人一次模型调用，需定期输出进度（否则看似卡死）。 */
+  let scanned = 0
   for (const person of env.workspace.persons) {
     if (person.unknown) continue
     const samples = sampleMessagesOf(person, env.workspace.messages)
     if (samples.length === 0) continue
     tasks += 1
+    scanned += 1
+    if (scanned % 50 === 0) {
+      env.logger.info?.('social.build.stage6.progress', {
+        module: 'MOD-007',
+        stage: 6,
+        done: scanned,
+        total: env.workspace.persons.length,
+        failures: failures.length,
+      })
+    }
     const scope = `social.build.stage6:${person.personId}`
     const outcome = await runTask(env, `6:${person.personId}`, personalityRequest(samples), scope)
     if (!outcome.ok) {
