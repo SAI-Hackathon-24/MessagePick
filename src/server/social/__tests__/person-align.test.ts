@@ -60,9 +60,14 @@ describe('人在同步（只有已确认映射才合并）', () => {
   it('无候选映射：一人 = 一个群成员（独立个体）', () => {
     const result = syncPeople({ members, candidates: [] })
 
-    expect(result.persons.map((person) => person.personId)).toEqual(['m1', 'm2', 'm3'])
-    expect(result.personByMember.get('m1')).toBe('m1')
-    expect(result.personByMember.get('m2')).toBe('m2')
+    // 人标识 = MOD-002 的归属口径 `person:<群>:<成员>`（不是成员标识本身）
+    expect(result.persons.map((person) => person.personId)).toEqual([
+      'person:g1:m1',
+      'person:g1:m3',
+      'person:g2:m2',
+    ])
+    expect(result.personByMember.get('m1')).toBe('person:g1:m1')
+    expect(result.personByMember.get('m2')).toBe('person:g2:m2')
   })
 
   it('未确认候选不生效：不合并，按独立个体处理（重点断言④）', () => {
@@ -72,8 +77,8 @@ describe('人在同步（只有已确认映射才合并）', () => {
     })
 
     expect(result.persons).toHaveLength(3)
-    expect(result.personByMember.get('m2')).toBe('m2')
-    expect(result.persons.find((person) => person.personId === 'm1')?.memberIds).toEqual(['m1'])
+    expect(result.personByMember.get('m2')).toBe('person:g2:m2')
+    expect(result.persons.find((person) => person.personId === 'person:g1:m1')?.memberIds).toEqual(['m1'])
   })
 
   it('已否定候选不生效：不合并', () => {
@@ -83,20 +88,21 @@ describe('人在同步（只有已确认映射才合并）', () => {
     })
 
     expect(result.persons).toHaveLength(3)
-    expect(result.personByMember.get('m2')).toBe('m2')
+    expect(result.personByMember.get('m2')).toBe('person:g2:m2')
   })
 
-  it('已确认候选合并：人标识 = 最小成员标识、成员集合跨群、映射一致', () => {
+  it('已确认候选合并：人标识 = 组内 personId 最小值、成员集合跨群、映射一致', () => {
     const result = syncPeople({
       members,
       candidates: [candidate('c1', ['m2', 'm1'], '已确认')],
     })
 
     expect(result.persons).toHaveLength(2)
-    const merged = result.persons.find((person) => person.personId === 'm1') as Person
+    // 合并后两种口径都指向同一个（最小的）人标识
+    const merged = result.persons.find((person) => person.personId === 'person:g1:m1') as Person
     expect(merged.memberIds).toEqual(['m1', 'm2'])
-    expect(result.personByMember.get('m1')).toBe('m1')
-    expect(result.personByMember.get('m2')).toBe('m1')
+    expect(result.personByMember.get('m1')).toBe('person:g1:m1')
+    expect(result.personByMember.get('m2')).toBe('person:g1:m1')
 
     // 活跃度口径的成员基础：该人涉及的群 = 两个群（跨群合并到人）
     const memberById = new Map(members.map((row) => [row.memberId, row]))
@@ -125,7 +131,7 @@ describe('人在同步（只有已确认映射才合并）', () => {
 
     expect(result.persons).toHaveLength(1)
     expect(result.persons[0]?.isMe).toBe(true)
-    expect(findMe(result.persons)?.personId).toBe('me')
+    expect(findMe(result.persons)?.personId).toBe('person:g1:me')
   })
 
   it('同步产物不推断：活跃度 / 回复时长 / 性格分均为零值基线（等阶段 2 覆写）', () => {
@@ -335,7 +341,7 @@ describe('候选生成与结论提交（REQ-082）', () => {
     // 确认：合并为同一人
     const confirmed = syncPeople({ members, candidates: [applyDecision(draft, '确认', T0)] })
     expect(confirmed.persons).toHaveLength(1)
-    expect(confirmed.personByMember.get('m2')).toBe('m1')
+    expect(confirmed.personByMember.get('m2')).toBe('person:g1:m1')
 
     // 否定：不合并
     const rejected = syncPeople({ members, candidates: [applyDecision(draft, '否定', T0)] })

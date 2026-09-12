@@ -162,11 +162,12 @@ describe('采集完成后的预热（§4.5）', () => {
     expect(calls.startBatch.length).toBeGreaterThan(0)
     expect(calls.startBatch[0]).toMatchObject({ cause: 'ingestDone' })
 
-    // MOD-006：以采集完成时刻为窗口终点跑一批抽取
+    /**
+     * MOD-006：**不带窗口**调用，窗口由该模块按自己的增量水位推导。
+     * 曾传 `{from: completedAt, to: completedAt}`（宽度 0）→ 首次抽取永远扫不到数据。
+     */
     expect(calls.extractRun.length).toBeGreaterThan(0)
-    const window = calls.extractRun[0] as { from: number; to: number }
-    expect(typeof window.to).toBe('number')
-    expect(window.from).toBe(window.to)
+    expect(calls.extractRun[0]).toBeUndefined()
 
     // MOD-007：无入参取数预热
     expect(calls.fit).toBeGreaterThan(0)

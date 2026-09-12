@@ -95,7 +95,13 @@ export function member(
     groupId,
     displayName: displayName ?? memberId,
     isMe: false,
-    personId: memberId,
+    /**
+     * ⚠️ 必须与 MOD-002 的真实口径一致：`person:<群>:<成员>`（`ingest/mapping/identity.ts`）。
+     * 此前这里写成 `personId: memberId`（如 `'m1'`），与真实数据不同 ——
+     * 于是「人标识取成员 personId 最小值」这个缺陷在测试里永远暴露不出来，
+     * 而真实库上会让「我」多出一条 `isMe` 记录、撞 `dm011_person` 的 `is_me` 唯一索引。
+     */
+    personId: `person:${groupId}:${memberId}`,
     ...overrides,
   }
 }

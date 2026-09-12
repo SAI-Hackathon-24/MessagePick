@@ -1041,7 +1041,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
    * 每模块一条 `kind='warmup'` 操作（scope = 模块 ID）；预热失败**不阻塞**
    * update 响应（后台跑，失败只收敛操作状态）。
    */
-  function runWarmup(completedAt: number): void {
+  function runWarmup(): void {
     if (!config.ingest.autoTriggerAfterIngest) return
 
     const warm = (moduleId: string, task: () => Promise<unknown>, settle: (value: unknown) => { state: ShellOperation['state']; error?: ErrorEnvelope }): void => {
@@ -1068,10 +1068,19 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     // MOD-005：后台批量生成梗（scope 取空 = 不限）
     warm('MOD-005', () => Promise.resolve(meme.startBatch('ingestDone')), () => ({ state: 'succeeded' }))
 
-    // MOD-006：以采集完成时刻为窗口终点跑一批抽取
+    /**
+     * MOD-006：抽取一批。
+     *
+     * ⚠️ **不传窗口**：窗口语义由该模块按自己的增量水位推导（§4.5 原文
+     * 「窗口语义按该模块的增量水位口径，本模块只传采集完成时刻」）。
+     * 该模块的 `deriveWindow` 在**首次**运行时给 `{from: 0, to: now}`（扫全量），
+     * 之后给 `{from: 水位 - 重叠窗口, to: now}`。
+     * 若这里自己拼一个 `{from: completedAt, to: completedAt}`，窗口宽度为 0 ——
+     * 首次抽取必然一条都扫不到（实测就是这样）。
+     */
     warm(
       'MOD-006',
-      () => extract.run({ from: completedAt, to: completedAt }),
+      () => extract.run(),
       (value) => {
         const result = value as { status?: string } | undefined
         return { state: result?.status === 'failed' ? 'failed' : 'succeeded' }
@@ -1110,7 +1119,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         notifyDataEpoch(currentEpoch(store))
         if (outcome.ok) {
           // 预热（§4.5）：后台发起，不阻塞本次响应；失败只收敛 warmup 操作状态
-          runWarmup(clock())
+          runWarmup()
         }
         if (outcome.ok) {
           res.json(success(metaOf(req), outcome.data))

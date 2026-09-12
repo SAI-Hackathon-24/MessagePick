@@ -3,7 +3,12 @@
  *
  * 口径：
  * - 未确认映射时一人 = 一个群成员；**只有状态为「已确认」的候选映射**才把群成员合并到同一个人；
- * - 人的标识取成员标识的最小值（合并后仍稳定，派生记录按此键幂等写入）；
+ * - 人的标识取**成员记录上 `personId` 的最小值**（该字段由 MOD-002 的结构绑定维护，
+ *   未确认映射时为 `person:<群>:<成员>`）。合并后仍稳定，派生记录按此键幂等写入；
+ * - ⚠️ 这里**不再自造** `personId`（曾用「成员标识的最小值」）：那会让「我」归到一个
+ *   与 MOD-002 口径不同的新标识上，而 `dm011_person` 有 `is_me = 1` 的**唯一索引**，
+ *   于是为「我」写出第二条 `isMe` 记录 → 唯一约束冲突 → 阶段 0 失败、后续阶段全部 skipped
+ *   → 索引永不物化 → `API-020` ~ `API-029` 全部 `EMPTY_RESULT`（社交模块整体不可用）。
  * - 「我」= 含带 Me 标识成员的唯一人（`REQ-006`）；未知标记由活跃度在阶段 2 判定。
  */
 
@@ -33,11 +38,15 @@ export function syncPeople(input: PersonSyncInput): PersonSyncResult {
     }
     return root
   }
+  /**
+   * 并查集合并（按成员标识操作）。
+   * 根只用于**分组**，最终的人标识另按成员记录上的 `personId` 最小值确定（见下），
+   * 因此这里的根取值不影响对外标识。
+   */
   const union = (left: Id, right: Id): void => {
     const rootLeft = find(left)
     const rootRight = find(right)
     if (rootLeft === rootRight) return
-    // 取字典序小者为根：与「人标识 = 最小成员标识」一致。
     if (rootLeft < rootRight) parent.set(rootRight, rootLeft)
     else parent.set(rootLeft, rootRight)
   }
@@ -68,7 +77,12 @@ export function syncPeople(input: PersonSyncInput): PersonSyncResult {
   const personByMember = new Map<Id, Id>()
   for (const [root, members] of memberByRoot) {
     const memberIds = members.map((member) => member.memberId).sort()
-    const personId = memberIds[0] ?? root
+    /**
+     * 人标识 = 组内成员 `personId` 的最小值（MOD-002 的结构绑定口径）。
+     * 取最小是为了让「已确认合并」的结果与成员顺序无关、可幂等重放。
+     */
+    const personIds = members.map((member) => member.personId).sort()
+    const personId = personIds[0] ?? root
     persons.push({
       personId,
       memberIds,
