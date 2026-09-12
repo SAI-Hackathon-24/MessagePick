@@ -29,6 +29,12 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
+  /**
+   * 群多选与时间范围只作用于梗分析模块（使用者裁定）：
+   * 这两个维度本质是「梗的统计范围」，出现在信息提取 / 社交模块会让人以为
+   * 它们也在筛选那两页的数据。因此仅在模块一渲染，并给出说明。
+   */
+  const scopeVisible = filter.module === 'meme';
   const groupLabel = filter.groupIds.length === 0 ? '全部群' : filter.groupIds.length === 1 ? (groups.find((g) => g.id === filter.groupIds[0])?.name ?? '1 个群') : `已选 ${filter.groupIds.length} 个群`;
   const timeLabel = !filter.timeRange.start && !filter.timeRange.end ? '全部时间' : `${filter.timeRange.start?.slice(5) ?? '最早'} ~ ${filter.timeRange.end?.slice(5) ?? '最新'}`;
   const hasFilter = filter.groupIds.length > 0 || !!filter.timeRange.start || !!filter.timeRange.end || !!filter.keyword;
@@ -37,9 +43,15 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="global-filter">
-      <span className="mp-meta hidden lg:inline">全局筛选</span>
+      <span className="mp-meta hidden lg:inline">筛选</span>
+      {!scopeVisible && (
+        <span className="mp-meta" data-testid="scope-note">
+          群与时间范围用于梗统计，仅在本页无关，切到「群聊梗分析」可调整
+        </span>
+      )}
 
-      {/* 群多选 */}
+      {/* 群多选（仅梗分析模块） */}
+      {scopeVisible && (
       <div className="relative" ref={groupRef}>
         <button
           type="button"
@@ -83,8 +95,10 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
           </div>
         )}
       </div>
+      )}
 
-      {/* 时间范围 */}
+      {/* 时间范围（仅梗分析模块） */}
+      {scopeVisible && (
       <div className="relative" ref={timeRef}>
         <button
           type="button"
@@ -143,8 +157,9 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
           </div>
         )}
       </div>
+      )}
 
-      {/* 关键词（匹配对象随模块变化 —— REQ-005） */}
+      {/* 关键词：三个模块通用 */}
       <div className="relative">
         <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
         <input

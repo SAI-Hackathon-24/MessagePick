@@ -10,20 +10,17 @@
  *   · 生成：G1 表情包（三档素材 + 模板 + 文案 → 4 张）、G2 文字变体（5 条）、G3 新梗候选（确认后入库）
  */
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Clock, Flame, Grid3x3, RefreshCw, Sparkles, Table2 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { Clock, Flame, RefreshCw, Sparkles, Table2 } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
-import { cn } from '@/lib/cn';
 import { fmtMD, num } from '@/lib/format';
 import {
   CLOUD_LAYOUT_LABEL,
-  FONT_SCALE_LABEL,
   MEME_TYPE_COLOR,
   MEME_TYPE_LABEL,
   type CloudLayout,
-  type FontScaleMode,
   type MemeCloudEntry,
   type MemeUnit,
 } from '@/types';
@@ -40,22 +37,19 @@ type View = 'cloud' | 'lifecycle' | 'table';
 export default function MemePage() {
   const { filter, clearFilter } = useAppState();
   const { view: viewParam } = useParams();
-  const navigate = useNavigate();
   /** 视图由路由决定（左侧导航的子项），页面内切换时同步改 URL */
   const view: View = viewParam === 'lifecycle' ? 'lifecycle' : viewParam === 'table' ? 'table' : 'cloud';
-  const setView = (v: View) => navigate(`/meme/${v === 'lifecycle' ? 'lifecycle' : v === 'table' ? 'table' : 'cloud'}`);
   const [layout, setLayout] = useState<CloudLayout>('heat');
-  const [scale, setScale] = useState<FontScaleMode>('cumulative');
   const [mineOnly, setMineOnly] = useState(false);
   const [selected, setSelected] = useState<MemeUnit | null>(null);
   const [generateFor, setGenerateFor] = useState<MemeUnit | null>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | undefined>();
 
-  const cloud = useApi(() => api.memeCloud(filter, layout, scale), [JSON.stringify(filter), layout, scale]);
+  const cloud = useApi(() => api.memeCloud(filter, layout, 'cumulative'), [JSON.stringify(filter), layout]);
   /* 「我相关」视角（REQ-006）：与主查询同构，切换时只换数据源 */
   const mine = useApi(
-    () => (mineOnly ? api.myMemes(filter, 'used') : api.memeCloud(filter, layout, scale)),
-    [mineOnly, JSON.stringify(filter), layout, scale],
+    () => (mineOnly ? api.myMemes(filter, 'used') : api.memeCloud(filter, layout, 'cumulative')),
+    [mineOnly, JSON.stringify(filter), layout],
   );
   const lifecycle = useApi(() => api.memeLifecycle(filter, []), [JSON.stringify(filter)]);
 
@@ -78,62 +72,17 @@ export default function MemePage() {
 
   return (
     <div className="space-y-5">
-      {/* 指标 + 视图切换 */}
+      {/* 指标条 */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="梗词云条目" value={stats.count} unit="个" hint="字号 = 出现频率" icon={Sparkles} />
-        <Stat label="累计出现次数" value={num(stats.total)} unit="次" hint={`口径：${FONT_SCALE_LABEL[scale]}`} icon={Flame} tone="amber" />
+        <Stat label="累计出现次数" value={num(stats.total)} unit="次" hint="字号 = 出现频率，范围取自顶部时间筛选" icon={Flame} tone="amber" />
         <Stat label="最热的梗" value={stats.hottest?.name ?? '—'} hint={stats.hottest ? `${stats.hottest.occurrences} 次` : ''} icon={Flame} tone="coral" />
         <Stat label="生命周期视图" value={lifecycle.data?.rows.length ?? '—'} unit="行" hint="每梗一行，条带 = 生命周期跨度" icon={Clock} tone="ink" />
       </section>
 
       {/* 词云工具条：字号口径 + 布局 + 我相关 + 等价视图（全部属于模块一的视图状态，不是第二套筛选控件） */}
       <Card className="flex flex-wrap items-center gap-2 px-3.5 py-2.5">
-        <div className="flex items-center gap-1 rounded-xl bg-ink-900/[0.04] p-1">
-          {(
-            [
-              { k: 'cloud', label: '梗词云', icon: Grid3x3 },
-              { k: 'lifecycle', label: '梗生命周期', icon: Clock },
-              { k: 'table', label: '列表 / 表格', icon: Table2 },
-            ] as { k: View; label: string; icon: typeof Grid3x3 }[]
-          ).map((v) => (
-            <button
-              key={v.k}
-              type="button"
-              data-testid={`meme-view-${v.k}`}
-              onClick={() => setView(v.k)}
-              className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors', view === v.k ? 'bg-white text-jade-700 shadow-sm' : 'text-ink-500 hover:text-ink-700')}
-            >
-              <v.icon size={13} />
-              {v.label}
-            </button>
-          ))}
-        </div>
-
         <span className="mx-1 h-4 w-px bg-ink-900/10" />
-
-        <span className="mp-meta">字号口径</span>
-        {(Object.keys(FONT_SCALE_LABEL) as FontScaleMode[]).map((k) => (
-          <Chip
-            key={k}
-            active={scale === k}
-            onClick={() => setScale(k)}
-            title={
-              k === 'window'
-                ? '时间窗取顶部全局筛选条的「时间范围」，模块内不另设时间控件（REQ-020、REQ-049）'
-                : '累计出现次数：不受时间范围影响（REQ-020）'
-            }
-          >
-            {FONT_SCALE_LABEL[k]}
-          </Chip>
-        ))}
-        {/* 选「指定时间窗」时必须让人看见「窗」是哪一段，否则会以为缺一个时间选择器 */}
-        {scale === 'window' && (
-          <span className="mp-meta" data-testid="scale-window-hint">
-            时间窗 = 顶部全局筛选条的范围：
-            <strong>{filter.timeRange.start || '最早'}</strong> ~ <strong>{filter.timeRange.end || '最新'}</strong>
-            （在顶部「全部时间」处修改）
-          </span>
-        )}
 
         <span className="mx-1 h-4 w-px bg-ink-900/10" />
         <span className="mp-meta">布局</span>

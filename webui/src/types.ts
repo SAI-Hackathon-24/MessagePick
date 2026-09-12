@@ -300,6 +300,99 @@ export interface SourceRef {
   excerpt: string;
 }
 
+/* -------------------------------------------------------------------------- */
+/* 梗王榜（模块一的排行榜；展示用派生值）                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 榜单里每个人的三项指标与综合评分。
+ *
+ * 口径（均为可由对话记录统计的事实，不做性格判断 —— REQ-031、REQ-041）：
+ *   · 参与度 = 该成员使用梗的总次数（说了多少次）
+ *   · 创造力 = 由该成员**首次带火**的梗数量
+ *     （该梗的首现消息出自他，且这个梗被全群反复使用 —— 对应「梗王」的判定）
+ *   · 综合分 = 参与度 40% + 覆盖广度 20% + 带火贡献 40%，
+ *     三项各自除以群内最大值归一化到 0–100 后加权求和
+ */
+export interface MemeKingRow {
+  memberId: string;
+  name: string;
+  /** 参与度：使用梗的总次数 */
+  participations: number;
+  /** 覆盖广度：用过的不同梗数量 */
+  distinctMemes: number;
+  /** 创造力：由该成员首次带火、且被全群反复使用的梗数量 */
+  authoredHits: number;
+  /** 由该成员带火的梗（用于展开查看） */
+  authoredMemeNames: string[];
+  /** 三项归一化后的分值 */
+  normalized: { participations: number; distinctMemes: number; authoredHits: number };
+  /** 综合评分 0–100 */
+  score: number;
+  /** 综合榜第一名 = 梗王 */
+  isKing: boolean;
+  rank: number;
+}
+
+export interface MemeKingBoard {
+  rows: MemeKingRow[];
+  /** 梗王（综合分第一；并列时取参与度更高者） */
+  king?: MemeKingRow;
+  /** 计算该榜所用的总提及次数，便于界面说明口径 */
+  totalParticipations: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 梗年鉴（全屏翻页回顾；模块一的展示形态之一）                                   */
+/* -------------------------------------------------------------------------- */
+
+/** 年鉴里「一个凉掉的梗」：火过又凉了（出现次数多、但最近基本不再出现） */
+export interface FadedMeme {
+  memeId: string;
+  name: string;
+  occurrences: number;
+  /** 峰值时间（ISO） */
+  peakAt: string;
+  /** 峰值所在月份，文案里用「X 月 X 日」 */
+  peakLabel: string;
+  /** 沉寂时间（最近一次出现） */
+  silentAt: string;
+  /** 距最近一次出现的天数 */
+  silentDays: number;
+}
+
+/** 年鉴所需的全部数据（一次取回，翻页不再请求） */
+export interface MemeYearbook {
+  groupName: string;
+  /** 数据时间范围（用于封面与文案） */
+  range: { start: string; end: string };
+  /** 这段时间的消息总数 */
+  totalMessages: number;
+  /** 其中「玩梗消息」数 = 全部梗出现记录之和 */
+  memeMessages: number;
+  /** 最热的梗 */
+  topMeme?: { memeId: string; name: string; occurrences: number };
+  /** 最热梗的诞生：第一条使用它的消息 */
+  topMemeBirth?: {
+    memeName: string;
+    senderName: string;
+    text: string;
+    sentAt: string;
+    groupName: string;
+  };
+  /** 自动挑选的「火过又凉了」的梗 */
+  fadedMeme?: FadedMeme;
+  /** Top10 梗（供生成群称号用） */
+  topMemes: { memeId: string; name: string; occurrences: number }[];
+  /**
+   * 群称号（LLM 依据 Top10 梗生成）。
+   * 由前端按「群 + 时间范围」缓存，避免每次翻页都重新生成。
+   */
+  title?: string;
+  /** 数据是否足以写年鉴（不足时界面显示「数据还不够写年鉴」） */
+  enough: boolean;
+}
+
 /** 月度分布项（REQ-029 / AC-054：标注不完整月份） */
 export interface MonthlyBucket {
   /** 'YYYY-MM' */

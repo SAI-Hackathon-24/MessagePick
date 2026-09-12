@@ -83,6 +83,14 @@
 - 懒加载图表与异步取数要**轮询等待**，不要用固定 `sleep`（否则出现随机失败）。
 - 页面内不得出现**未注册 ECharts 组件**导致的空白图：新增图表类型时同步更新 §3。
 
+## 6.1 本轮新增的前端接口（后端需实现，已在前端 api 层预留）
+
+| 前端方法 | 建议路由 | 说明 |
+| --- | --- | --- |
+| `api.memeKingBoard` | `GET /api/memes/king-board` | 梗王榜。口径：参与度 = 使用梗总次数；创造力 = 由其**首次带火**且被反复使用的梗数量；综合分 = 参与度 40% + 覆盖广度 20% + 带火贡献 40%（各归一化 0–100）。综合第一即「梗王」 |
+| `api.memeYearbook` | `GET /api/memes/yearbook` | 梗年鉴（全屏翻页回顾）一次取齐 6 页所需数据；数据不足时 `enough = false` |
+| `api.yearbookTitle` | `POST /api/memes/yearbook/title` | LLM 依据 Top10 梗生成群称号。**前端按「群 + 时间范围」用 localStorage 缓存**（键 `mp:yearbook-title:<群key>`） |
+
 ## 7. 待办与已知遗留
 
 | 项 | 说明 |

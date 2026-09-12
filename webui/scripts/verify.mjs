@@ -156,7 +156,7 @@ const cloud = await ev(`(() => {
     canvasReady: document.querySelectorAll('canvas').length > 0,
   };
 })()`);
-rec('REQ-020', '梗词云：字号口径可切 + 类型图例与文字标签', cloud.hasScale && cloud.hasLegend, `口径=${cloud.hasScale} 图例=${cloud.hasLegend}`);
+rec('REQ-020', '梗词云：类型图例与文字标签（字号口径切换已按要求并入顶部时间筛选）', cloud.hasLegend === true, `图例=${cloud.hasLegend}（口径切换按钮已删除：${cloud.hasScale === false}）`);
 rec('REQ-021', '提供列表 / 表格等价视图入口', cloud.hasTableEntry, '');
 rec('REQ-023', '布局切换：按热度 / 按首次出现时间', cloud.hasLayout, '');
 rec('REQ-052+', '梗词云实际绘制（canvas 就绪）', cloud.canvasReady, '');
@@ -505,18 +505,6 @@ const overviewNav = await ev(`(() => ({
 }))()`);
 rec('总览入口', '左上角图标与侧栏均可回到总览', overviewNav.byIcon && overviewNav.byRow, `图标=${overviewNav.byIcon} 侧栏行=${overviewNav.byRow}`);
 
-await goto('#/meme/cloud');
-await sleep(900);
-const windowHint = await ev(`(() => {
-  const chips = [...document.querySelectorAll('button')].filter(b => /指定时间窗内出现频次/.test(b.textContent || ''));
-  if (!chips.length) return { ok: false };
-  chips[0].click();
-  return { ok: true };
-})()`);
-await sleep(800);
-const hintText = await ev(`(() => { const el = document.querySelector('[data-testid="scale-window-hint"]'); return el ? el.innerText.replace(/\s+/g, ' ') : null; })()`);
-rec('字号口径', '切到「指定时间窗」时明确展示时间窗来源（取自全局筛选条）', windowHint.ok && !!hintText, hintText ? hintText.slice(0, 60) : '未出现提示');
-
 await goto('#/extract/timeline');
 await sleep(1500);
 const quick = await ev(`(() => {
@@ -729,6 +717,116 @@ const personaCheck = await ev(`(() => {
 rec('性格标签', '性格标签直接展示六维分数，不再有候选/确认交互',
   personaCheck.hasPanel && personaCheck.hasSixDims && !personaCheck.hasCandidate && !personaCheck.hasConfirmButton,
   `面板=${personaCheck.hasPanel} 六维齐全=${personaCheck.hasSixDims} 候选字样=${personaCheck.hasCandidate} 确认按钮=${personaCheck.hasConfirmButton}`);
+
+
+/* ================================================================== */
+/* 第四轮评审：筛选范围 / 去重 / 总览改版 / 梗王榜 / 年鉴                 */
+/* ================================================================== */
+
+/* 群与时间范围只在梗分析模块出现（使用者裁定） */
+const scope = {};
+for (const [route, mod] of [['#/meme/cloud', 'meme'], ['#/extract/timeline', 'extract'], ['#/social/forward', 'social']]) {
+  await goto(route);
+  await waitFor('[data-testid="filter-keyword"]');
+  scope[mod] = await ev(`JSON.stringify({
+    groups: !!document.querySelector('[data-testid="filter-groups"]'),
+    time: !!document.querySelector('[data-testid="filter-time"]'),
+    keyword: !!document.querySelector('[data-testid="filter-keyword"]'),
+    note: !!document.querySelector('[data-testid="scope-note"]'),
+  })`);
+  scope[mod] = JSON.parse(scope[mod]);
+}
+rec('筛选范围', '群与时间范围只在梗分析模块出现，其它模块保留关键词并给出说明',
+  scope.meme.groups && scope.meme.time && !scope.extract.groups && !scope.extract.time && scope.extract.keyword && scope.extract.note
+    && !scope.social.groups && !scope.social.time && scope.social.keyword,
+  `梗群/时=${scope.meme.groups}/${scope.meme.time} · 提取=${scope.extract.groups}/${scope.extract.time} 说明=${scope.extract.note} · 社交=${scope.social.groups}/${scope.social.time}`);
+
+/* 梗页内不再有重复的视图切换与字号口径 */
+await goto('#/meme/cloud');
+await waitFor('[data-testid="meme-card-strip"]');
+const dedup = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return {
+    viewButtons: document.querySelectorAll('[data-testid^="meme-view-"]').length,
+    hasFontScale: /指定时间窗内出现频次/.test(t),
+    hasLayout: /按热度/.test(t),
+  };
+})()`);
+rec('去重', '梗页删除与左侧导航重复的视图切换、删除与时间筛选重复的字号口径',
+  dedup.viewButtons === 0 && dedup.hasFontScale === false && dedup.hasLayout,
+  `视图按钮残留=${dedup.viewButtons} 字号口径残留=${dedup.hasFontScale} 布局切换保留=${dedup.hasLayout}`);
+
+/* 总览：兴趣评分卡 → 我的爱好 */
+await goto('#/');
+// 我的爱好来自 Me 的画像（先取人物图谱拿到 Me 标识，再取画像），需等待
+for (let i = 0; i < 20; i++) {
+  await sleep(400);
+  const ready = await ev(`/我的兴趣标签/.test(document.querySelector('main')?.innerText || '')`);
+  if (ready) break;
+}
+const overviewCard = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return { hasHobby: /我的爱好/.test(t) && /我的兴趣标签/.test(t), hasScoreCard: /兴趣评分卡/.test(t) };
+})()`);
+rec('总览', '兴趣评分卡改为展示「我的爱好」（个人维度与标签），不再展示群内 tag 排行',
+  overviewCard.hasHobby && !overviewCard.hasScoreCard,
+  `我的爱好=${overviewCard.hasHobby} 旧评分卡残留=${overviewCard.hasScoreCard}`);
+
+/* 梗王榜 */
+await goto('#/meme/king');
+await waitFor('[data-testid="meme-king"]');
+const king = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return {
+    kingCard: !!document.querySelector('[data-testid="meme-king"]'),
+    rows: document.querySelectorAll('main table tbody tr').length,
+    hasThreeMetrics: /参与度/.test(t) && /覆盖广度/.test(t) && /创造力/.test(t),
+    kingBadge: /梗王/.test(t),
+    sorts: ['score', 'participations', 'distinctMemes', 'authoredHits'].every((k) => !!document.querySelector('[data-testid="king-sort-' + k + '"]')),
+  };
+})()`);
+rec('梗王榜', '新增梗王榜：参与度 / 覆盖广度 / 创造力三项指标 + 综合评分 + 梗王标记',
+  king.kingCard && king.rows > 0 && king.hasThreeMetrics && king.kingBadge && king.sorts,
+  `梗王卡=${king.kingCard} 榜单行=${king.rows} 三项指标=${king.hasThreeMetrics} 排序=${king.sorts}`);
+
+/* 年鉴：6 页翻页 / 圆点 / 退出 / 称号 / 导出 */
+await goto('#/meme/review');
+await waitFor('[data-testid="yearbook"]', 25);
+const yb = await ev(`(() => ({
+  exists: !!document.querySelector('[data-testid="yearbook"]'),
+  dots: document.querySelectorAll('[data-testid="yearbook-dots"] button').length,
+  exit: !!document.querySelector('[data-testid="yearbook-exit"]'),
+  cover: /群聊梗年鉴/.test(document.querySelector('main')?.innerText || ''),
+}))()`);
+rec('年鉴', '年鉴为全屏翻页页：封面 + 页码圆点 + 随时退出', yb.exists && yb.dots === 6 && yb.exit && yb.cover,
+  `页数圆点=${yb.dots} 退出=${yb.exit} 封面=${yb.cover}`);
+
+// 逐页翻到末页，确认 6 页都能到、结尾页有称号与导出
+let reached = 0;
+for (let i = 0; i < 6; i++) {
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))`);
+  await sleep(650);
+  const p = await ev(`(document.querySelector('[data-testid="yearbook"] header')?.innerText || '').split('\\n').pop()`);
+  if (p) reached = Math.max(reached, Number(p.split('/')[0].trim()) || 0);
+}
+const ending = await ev(`(() => {
+  const el = document.querySelector('[data-testid="yearbook-ending"]');
+  return {
+    hasEnding: !!el,
+    hasTitle: !/正在/.test(el?.innerText || ''),
+    hasExport: !!document.querySelector('[data-testid="yearbook-export"]'),
+    title: (el?.innerText || '').split('\\n')[1] ?? null,
+  };
+})()`);
+rec('年鉴', '方向键可翻到第 6 页（称号 + 可保存分享卡片）', reached === 6 && ending.hasEnding && ending.hasExport,
+  `到达页=${reached} 结尾页=${ending.hasEnding} 导出=${ending.hasExport} 称号=「${ending.title}」`);
+
+/* 数据不足时的分支（年鉴数据够不够由 mock 判定；这里确认组件有该分支文案） */
+const insufficientBranch = await ev(`(async () => {
+  const src = await fetch('/src/pages/ReviewPage.tsx').then((r) => r.text());
+  return /数据还不够写年鉴/.test(src);
+})()`);
+rec('年鉴', '数据不足时显示「数据还不够写年鉴」（分支存在，不报错）', insufficientBranch === true, `分支文案存在=${insufficientBranch}`);
 
 console.log('\n===== 汇总 =====');
 const passed = results.filter((r) => r.pass).length;

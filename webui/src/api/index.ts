@@ -37,6 +37,8 @@ import {
   type MaterialConsent,
   type MaterialTier,
   type MemeCloudResult,
+  type MemeKingBoard,
+  type MemeYearbook,
   type MemeContext,
   type MemeUnit,
   type MessageDetail,
@@ -176,6 +178,81 @@ export const api = {
     const data = m.mockMemeCloud(f, layout, scale);
     if (!data.entries.length) return fail('EMPTY_RESULT', '当前筛选条件下没有梗', '可一键清除筛选条件后重试。');
     return ok(data);
+  },
+
+  /**
+   * 查询梗王榜（模块一排行榜）
+   * 后端建议路由：GET /api/memes/king-board
+   * 口径：参与度 = 使用梗的总次数；创造力 = 由其首次带火且被反复使用的梗数量；
+   *      综合分 = 参与度 40% + 覆盖广度 20% + 带火贡献 40%（各归一化到 0–100）
+   */
+  async memeKingBoard(f: GlobalFilter): Promise<ApiEnvelope<MemeKingBoard>> {
+    await tick();
+    if (MODE === 'http') return http<MemeKingBoard>(`/memes/king-board?${qs({ filter: f })}`);
+    const data = m.mockMemeKingBoard(f);
+    if (!data.rows.length) return fail('EMPTY_RESULT', '当前筛选条件下没有可统计的梗', '可一键清除筛选条件后重试。');
+    return ok(data);
+  },
+
+  /**
+   * 查询梗年鉴数据（模块一的全屏回顾）
+   * 后端建议路由：GET /api/memes/yearbook
+   * 一次返回全部 6 页所需数据（封面 / 总量 / 最热的梗 / 它的诞生 / 凉掉的梗 / 结尾），
+   * 翻页不再请求。数据不足时 `enough = false`，界面显示「数据还不够写年鉴」。
+   */
+  async memeYearbook(f: GlobalFilter): Promise<ApiEnvelope<MemeYearbook>> {
+    await tick();
+    if (MODE === 'http') return http<MemeYearbook>(`/memes/yearbook?${qs({ filter: f })}`);
+    return ok(m.mockYearbook(f));
+  },
+
+  /**
+   * 生成群称号（结尾页）：由 LLM 依据 Top10 梗生成。
+   * 按「群 + 时间范围」缓存，避免重复生成（使用者明确要求缓存）。
+   */
+  async yearbookTitle(groupKey: string, topMemes: string[]): Promise<ApiEnvelope<{ title: string; cached: boolean }>> {
+    const cacheKey = `mp:yearbook-title:${groupKey}`;
+    try {
+      const cached = window.localStorage.getItem(cacheKey);
+      if (cached) return ok({ title: cached, cached: true });
+    } catch {
+      /* localStorage 不可用时忽略缓存 */
+    }
+
+    await tick(700);
+    if (MODE === 'http') {
+      const res = await http<{ title: string }>('/memes/yearbook/title', { method: 'POST', body: JSON.stringify({ groupKey, topMemes }) });
+      if (res.ok && res.data) {
+        try {
+          window.localStorage.setItem(cacheKey, res.data.title);
+        } catch {
+          /* ignore */
+        }
+        return ok({ title: res.data.title, cached: false });
+      }
+      return res as ApiEnvelope<{ title: string; cached: boolean }>;
+    }
+
+    if (!topMemes.length) return fail('EMPTY_RESULT', '梗太少，暂时写不出称号');
+
+    /** 开发期：按 Top10 梗的构成拼一句可读的称号（后端接 LLM 后替换） */
+    const seed = topMemes.join('');
+    let h = 0;
+    for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+    const candidates = [
+      `年度梗最密的群`,
+      `人均三个热梗的群`,
+      `梗不过夜的群`,
+      `${topMemes[0]} 一统江湖的群`,
+      `每天都在造词的群`,
+    ];
+    const title = candidates[h % candidates.length];
+    try {
+      window.localStorage.setItem(cacheKey, title);
+    } catch {
+      /* ignore */
+    }
+    return ok({ title, cached: false });
   },
 
   /** API-010 查询梗单元：解读 / 首现 / 最近调用 / 分布 / 生命周期 / 梗王 / 精华 / 变体 */

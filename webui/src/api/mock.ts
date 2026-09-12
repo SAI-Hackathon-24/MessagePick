@@ -13,6 +13,7 @@ import {
   ALIGNMENT_CANDIDATES,
   DATA_END,
   EXTRACTS,
+  MESSAGES,
   GENERATION_HISTORY,
   GROUPS,
   MATERIAL_CONSENTS,
@@ -42,6 +43,10 @@ import {
 } from './fixtures';
 import type {
   DataFlowNotice,
+  FadedMeme,
+  MemeYearbook,
+  MemeKingBoard,
+  MemeKingRow,
   DeletePrecheck,
   DeleteResult,
   DeleteScope,
@@ -93,6 +98,10 @@ const inGroups = (groupId: string, f: GlobalFilter) => !f.groupIds.length || f.g
 const has = (hay: string | undefined, kw: string) => !kw || (hay ?? '').toLowerCase().includes(kw.toLowerCase());
 
 /** 有效梗 = 未被改判「不是梗」也未合并（改判立即影响后续结果 —— REQ-035） */
+/** 数据基准日期（仅取日期部分，供年鉴封面显示用） */
+const DATA_START_ISO = DATA_END.toISOString().slice(0, 4) + '-03-01';
+const DATA_END_ISO = DATA_END.toISOString().slice(0, 10);
+
 const activeMemes = () => MEMES.filter((m) => m.correction !== 'not_meme' && m.correction !== 'merged');
 
 /* -------------------------------------------------------------------------- */
@@ -463,6 +472,154 @@ export const mockMessageDetail = (id: string): MessageDetail | null => {
 /* -------------------------------------------------------------------------- */
 /** 一级固定五类的中文名（REQ-017：不引入英文术语） */
 const CATEGORY_CN: Record<string, string> = { sports: '运动', art: '艺术', game: '游戏', entertainment: '娱乐', social: '社交' };
+
+/* -------------------------------------------------------------------------- */
+/* 梗王榜（模块一排行榜）：参与度 / 创造力 / 综合评分                              */
+/* -------------------------------------------------------------------------- */
+export const mockMemeKingBoard = (f: GlobalFilter): MemeKingBoard => {
+  const memes = activeMemes().filter((m) => inGroups(m.groupId, f));
+
+  /** 每个成员的使用次数与用过的梗集合 */
+  const useCount = new Map<string, number>();
+  const usedMemes = new Map<string, Set<string>>();
+  const totalParticipations = memes.reduce((sum, m) => sum + m.occurrences.length, 0);
+
+  memes.forEach((m) => {
+    m.occurrences.forEach((o) => {
+      useCount.set(o.memberId, (useCount.get(o.memberId) ?? 0) + 1);
+      if (!usedMemes.has(o.memberId)) usedMemes.set(o.memberId, new Set());
+      usedMemes.get(o.memberId)!.add(m.id);
+    });
+  });
+
+  /** 创造力：该梗的首条出现记录出自谁就算谁带火；且要求该梗被反复使用（≥ 群内中位数） */
+  const counts = memes.map((m) => m.occurrences.length).sort((a, b) => a - b);
+  const median = counts.length ? counts[Math.floor(counts.length / 2)] : 0;
+  const authoredHits = new Map<string, string[]>();
+  memes
+    .filter((m) => m.occurrences.length >= Math.max(5, median))
+    .forEach((m) => {
+      const first = m.occurrences[0];
+      if (!first) return;
+      const list = authoredHits.get(first.memberId) ?? [];
+      list.push(m.name);
+      authoredHits.set(first.memberId, list);
+    });
+
+  const memberIds = [...useCount.keys()];
+  const maxUse = Math.max(...memberIds.map((id) => useCount.get(id) ?? 0), 1);
+  const maxDistinct = Math.max(...memberIds.map((id) => usedMemes.get(id)?.size ?? 0), 1);
+  const maxAuthored = Math.max(...memberIds.map((id) => authoredHits.get(id)?.length ?? 0), 1);
+
+  const rows: MemeKingRow[] = memberIds
+    .map((memberId) => {
+      const participations = useCount.get(memberId) ?? 0;
+      const distinctMemes = usedMemes.get(memberId)?.size ?? 0;
+      const authored = authoredHits.get(memberId) ?? [];
+      const normalized = {
+        participations: Math.round((participations / maxUse) * 100),
+        distinctMemes: Math.round((distinctMemes / maxDistinct) * 100),
+        authoredHits: Math.round((authored.length / maxAuthored) * 100),
+      };
+      return {
+        memberId,
+        name: memberById(memberId)?.displayName ?? memberId,
+        participations,
+        distinctMemes,
+        authoredHits: authored.length,
+        authoredMemeNames: authored,
+        normalized,
+        // 参与度 40% + 覆盖广度 20% + 带火贡献 40%
+        score: Math.round(normalized.participations * 0.4 + normalized.distinctMemes * 0.2 + normalized.authoredHits * 0.4),
+        isKing: false,
+        rank: 0,
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.participations - a.participations);
+
+  rows.forEach((r, i) => {
+    r.rank = i + 1;
+  });
+  if (rows.length) rows[0].isKing = true;
+
+  return { rows, king: rows[0], totalParticipations };
+};
+
+/* -------------------------------------------------------------------------- */
+/* 梗年鉴（全屏翻页回顾）：一次算齐，翻页不再请求                                  */
+/* -------------------------------------------------------------------------- */
+export const mockYearbook = (f: GlobalFilter): MemeYearbook => {
+  const memes = activeMemes().filter((m) => inGroups(m.groupId, f));
+  const totalMessages = MESSAGES.filter((m) => inGroups(m.groupId, f) && inRange(m.sentAt, f)).length;
+  const memeMessages = memes.reduce((sum, m) => sum + m.occurrences.filter((o) => inRange(o.at, f)).length, 0);
+
+  const ranked = memes
+    .map((m) => ({ memeId: m.id, name: m.name, occurrences: m.occurrences.length, first: m.occurrences[0], last: m.occurrences[m.occurrences.length - 1] }))
+    .sort((a, b) => b.occurrences - a.occurrences);
+
+  const topMemes = ranked.slice(0, 10).map(({ memeId, name, occurrences }) => ({ memeId, name, occurrences }));
+  const top = ranked[0];
+
+  /** 最热梗的诞生：首条使用它的消息（含昵称 + 原文 + 日期） */
+  let topMemeBirth: MemeYearbook['topMemeBirth'];
+  if (top?.first) {
+    const msg = MESSAGES.find((m) => m.id === top.first.messageId);
+    if (msg) {
+      topMemeBirth = {
+        memeName: top.name,
+        senderName: msg.senderName,
+        text: msg.text ?? top.name,
+        sentAt: msg.sentAt,
+        groupName: GROUPS.find((g) => g.id === msg.groupId)?.name ?? '',
+      };
+    }
+  }
+
+  /**
+   * 挑一个「火过又凉了」的梗：出现次数靠前（≥ 第 3 名或 ≥ 8 次），
+   * 但距最近一次出现的天数明显偏大（≥ 30 天）。若都不满足则取沉寂最久的那个。
+   */
+  const withSilence = ranked
+    .filter((r) => r.occurrences >= Math.max(8, Math.round((ranked[0]?.occurrences ?? 0) * 0.3)))
+    .map((r) => {
+      const silentDays = r.last ? Math.round((DATA_END.getTime() - Date.parse(r.last.at)) / 86400000) : 0;
+      const peakMonthly = monthlyOf(memes.find((m) => m.id === r.memeId)!);
+      const peak = peakMonthly.reduce((best, b) => (b.count > best.count ? b : best), peakMonthly[0]);
+      const peakOcc = r.memeId ? memes.find((m) => m.id === r.memeId)!.occurrences.find((o) => o.at.slice(0, 7) === peak?.month) : undefined;
+      return { ...r, silentDays, peakAt: peakOcc?.at ?? r.first?.at ?? '', peakLabel: peak?.month ?? '' };
+    })
+    .sort((a, b) => b.silentDays - a.silentDays);
+
+  const faded = withSilence.find((r) => r.silentDays >= 30) ?? withSilence[0];
+  const fadedMeme: FadedMeme | undefined = faded
+    ? {
+        memeId: faded.memeId,
+        name: faded.name,
+        occurrences: faded.occurrences,
+        peakAt: faded.peakAt,
+        peakLabel: faded.peakLabel,
+        silentAt: faded.last?.at ?? '',
+        silentDays: faded.silentDays,
+      }
+    : undefined;
+
+  return {
+    groupName: f.groupIds.length === 1 ? (GROUPS.find((g) => g.id === f.groupIds[0])?.name ?? '本群') : '全部群聊',
+    range: {
+      // 只保留日期部分：写入的是 date 输入框的值，带时区的 ISO 会在本地时区下差一天
+      start: (f.timeRange.start ?? DATA_START_ISO).slice(0, 10),
+      end: (f.timeRange.end ?? DATA_END_ISO).slice(0, 10),
+    },
+    totalMessages,
+    memeMessages,
+    topMeme: top ? { memeId: top.memeId, name: top.name, occurrences: top.occurrences } : undefined,
+    topMemeBirth,
+    fadedMeme,
+    topMemes,
+    // 数据太少时不写年鉴（界面对应「数据还不够写年鉴」）
+    enough: topMemes.length >= 3 && (top?.occurrences ?? 0) >= 5,
+  };
+};
 
 /** 活跃度综合分：实现放在 fixtures（与原始指标同源），这里只做再导出 */
 export const buildActivityBreakdown = activityBreakdownOf;

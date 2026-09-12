@@ -38,6 +38,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/meme/cloud', label: '梗词云' },
       { to: '/meme/lifecycle', label: '梗生命周期' },
       { to: '/meme/table', label: '梗列表 / 表格' },
+      { to: '/meme/king', label: '梗王榜' },
+      { to: '/meme/review', label: '梗年鉴（回顾）' },
     ],
   },
   {

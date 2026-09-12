@@ -10,7 +10,7 @@ import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
 import { fmtMD, num } from '@/lib/format';
-import { INTEREST_CATEGORY_LABEL, MEME_TYPE_LABEL, PRIORITY_LABEL } from '@/types';
+import { INTEREST_CATEGORIES, INTEREST_CATEGORY_LABEL, MEME_TYPE_LABEL, PRIORITY_LABEL } from '@/types';
 import { Card, CardHeader, ErrorState, LoadingState, SectionHeading, Stat } from '@/components/ui';
 import { HourBars } from '@/components/charts/Charts';
 
@@ -21,7 +21,12 @@ export default function OverviewPage() {
   const extracts = useApi(() => api.extractItems(filter, 1, 10), [JSON.stringify(filter)]);
   const due = useApi(() => api.dueTodos(new Date().toISOString()), []);
   const mine = useApi(() => api.myCompatibility(), []);
-  const scores = useApi(() => api.interestScoreCards(), []);
+  /**
+   * 「我的爱好」：读 Me 的画像（API-020），而不是群内 tag 排行。
+   * 总览要回答「我喜欢什么」，不是「群里谁最活跃」。
+   */
+  const meId = useApi(() => api.relationGraph(), []).data?.nodes.find((n) => n.isMe)?.personId;
+  const myProfile = useApi(() => (meId ? api.personProfile(meId) : Promise.resolve({ ok: true, data: null } as never)), [meId]);
 
   const memes = cloud.data?.entries ?? [];
   const items = extracts.data?.items ?? [];
@@ -158,24 +163,46 @@ export default function OverviewPage() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader title="兴趣评分卡" icon={BarChart3} subtitle="兴趣热度分 = 该爱好下的人的活跃 / 投入程度（模块三，REQ-078）" right={<Link to="/social" className="mp-meta text-jade-700 hover:underline">进入社交</Link>} />
+          <CardHeader
+            title="我的爱好"
+            icon={HeartHandshake}
+            subtitle="按你（Me 标识）的兴趣标签与一级维度汇总，不是群内 tag 排行"
+            right={<Link to="/social/forward" className="mp-meta text-jade-700 hover:underline">查看完整画像</Link>}
+          />
           <div className="px-4 py-3.5">
-            {scores.loading && !scores.data ? (
-              <LoadingState rows={1} label="正在读取评分卡…" />
+            {!myProfile.data ? (
+              <LoadingState rows={1} label="正在读取你的爱好…" />
+            ) : myProfile.error ? (
+              <ErrorState error={myProfile.error} onRetry={myProfile.refetch} className="!py-4" />
             ) : (
-              <ul className="grid gap-2 sm:grid-cols-2">
-                {(scores.data ?? []).slice(0, 6).map((c) => (
-                  <li key={c.tagId} className="rounded-xl border border-ink-900/[0.06] bg-white/60 px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs font-medium text-ink-700">{c.name}</span>
-                      <span className="mp-meta shrink-0">{INTEREST_CATEGORY_LABEL[c.category]} · {c.peopleCount} 人</span>
+              <>
+                <div className="space-y-1.5">
+                  {INTEREST_CATEGORIES.map((c) => (
+                    <div key={c} className="flex items-center gap-2">
+                      <span className="w-[52px] shrink-0 text-xs text-ink-600">{INTEREST_CATEGORY_LABEL[c]}</span>
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-900/[0.06]">
+                        <span
+                          className="block h-full rounded-full bg-gradient-to-r from-jade-400 to-jade-600"
+                          style={{ width: `${Math.min(100, (myProfile.data!.categoryScores[c] / 3) * 100)}%` }}
+                        />
+                      </span>
+                      <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-ink-500">{myProfile.data!.categoryScores[c].toFixed(1)}</span>
                     </div>
-                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-ink-900/[0.06]">
-                      <div className="h-full rounded-full bg-gradient-to-r from-jade-400 to-jade-600" style={{ width: `${Math.min(100, c.heat * 8)}%` }} />
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                  ))}
+                </div>
+                <div className="mt-3">
+                  <div className="mp-section-title mb-1.5">我的兴趣标签</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {myProfile.data!.tags.slice(0, 10).map((t) => (
+                      <span key={t.tagId} className="mp-chip !text-[11px]">
+                        {t.name}
+                        <span className="tabular-nums text-ink-400">{t.confidence}</span>
+                      </span>
+                    ))}
+                    {!myProfile.data!.tags.length && <span className="mp-meta">暂无标签</span>}
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </Card>

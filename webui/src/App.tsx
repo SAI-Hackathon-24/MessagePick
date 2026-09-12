@@ -9,6 +9,8 @@ import { AppStateProvider } from '@/state/appState';
 import { AppShell } from '@/components/shell/AppShell';
 import OverviewPage from '@/pages/OverviewPage';
 import MemePage from '@/pages/MemePage';
+import KingBoardPage from '@/pages/KingBoardPage';
+import ReviewPage from '@/pages/ReviewPage';
 import ExtractPage from '@/pages/ExtractPage';
 import SocialPage from '@/pages/SocialPage';
 
@@ -21,6 +23,8 @@ export default function App() {
             <Route index element={<OverviewPage />} />
             {/* 模块一：子项 = 梗词云 / 梗生命周期 / 梗列表 */}
             <Route path="meme" element={<Navigate to="/meme/cloud" replace />} />
+            <Route path="meme/king" element={<KingBoardPage />} />
+            <Route path="meme/review" element={<ReviewPage />} />
             <Route path="meme/:view" element={<MemePage />} />
             {/* 模块二：子项 = 消息时间轴 / 通知总览 / 待办与 DDL */}
             <Route path="extract" element={<Navigate to="/extract/timeline" replace />} />

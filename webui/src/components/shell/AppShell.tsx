@@ -8,7 +8,7 @@
  *   · 四类异常的统一呈现（REQ-016、AC-035）
  *   · 设置页：数据去向说明（REQ-012）与删除流程入口（REQ-011）
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { BarChart3, Clock3, Info, RefreshCw, Settings, UploadCloud } from 'lucide-react';
 import { useAppState } from '@/state/appState';
@@ -33,10 +33,21 @@ function pageTitle(pathname: string): string {
 }
 
 export function AppShell() {
-  const { status, statusLoading, triggerUpdate, updating, updateNotice, dismissUpdateNotice, setSettingsOpen, groups } = useAppState();
+  const { status, statusLoading, triggerUpdate, updating, updateNotice, dismissUpdateNotice, setSettingsOpen, groups, setModule } = useAppState();
   const loc = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const title = pageTitle(loc.pathname);
+
+  /**
+   * 路由变化时同步「当前模块」。
+   * 此前 filter.module 只在初始状态里设过一次，切页后不更新，
+   * 依赖它的逻辑（如「群与时间范围只在梗分析显示」）会一直按初始值判断。
+   */
+  useEffect(() => {
+    const key = loc.pathname.split('/')[1];
+    const next = key === 'extract' ? 'extract' : key === 'social' ? 'social' : 'meme';
+    setModule(next);
+  }, [loc.pathname, setModule]);
 
   /* REQ-003：未采集到任何数据 → 首屏引导 */
   if (!statusLoading && status && !status.hasData) {
