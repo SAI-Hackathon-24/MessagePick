@@ -7,6 +7,7 @@
  * - 发送者解析：消息行的发送者是「群昵称或 `me`」。昵称可能重名或不稳定，因此按
  *   `display_name → nick_name → remark → username` 建索引；解析不到的标签**回落为标签原文当成员标识**，
  *   并给该群补一条占位成员记录 —— 否则 `dm003_message` 的 `(group_id, sender_key)` 立即外键会让整条消息丢失。
+ *   `me` 行同理按需补（成员返回体不含登录账号，`isMe` 由调用方按「全库至多一条」裁决）。
  * - 媒体引用：CLI 只给本机绝对路径，而 `MediaRef` 必须是应用数据目录内的相对路径，且模块边界禁止本模块
  *   写媒体文件（§2「不持有第二份存储」）→ `mediaRef` 落 null（类型 = 图片 / 表情包仍保留，供 `MOD-002` 后续按需解密）。
  */
@@ -115,7 +116,10 @@ export interface MessageMappingResult {
 /**
  * `history` 返回体 → `DM-003` 消息记录（时间窗 + 分页已在调用方完成）。
  *
- * `markMe`：出现 `me` 发送者、需要补 Me 行时调用一次；返回 true 表示本次可把该行标为「我」
+ * 占位成员：发送者解析不到（回落标签原文）或发送者为 `me`（成员返回体不含登录账号）时，
+ * 都给该群补一条 `DM-004`，保证 `DM-003` 的立即外键成立、消息不丢。
+ *
+ * `markMe`：补 `me` 占位行时调用一次；返回 true 表示本次可把该行标为「我」
  * （全库至多一条，由调用方结合库里已有的标记状态决定）。
  */
 export function messageRecordsFromHistory(
@@ -127,17 +131,18 @@ export function messageRecordsFromHistory(
   const placeholders = new Map<Id, EntityRecord<'DM-004'>>()
 
   for (const line of parsed.parsed) {
-    let senderMemberId = options.index.resolve(line.senderLabel)
-    if (senderMemberId === null) {
-      // 解析不到归属：以标签原文当成员标识（`me` 标签 = 登录账号，统一走 Me 标识）。
-      senderMemberId = line.senderLabel === ME_MEMBER_ID ? ME_MEMBER_ID : line.senderLabel
-      if (!options.index.has(senderMemberId) && !placeholders.has(senderMemberId)) {
-        const isMe = senderMemberId === ME_MEMBER_ID && options.markMe?.() === true
-        placeholders.set(
-          senderMemberId,
-          memberRecord(payload.username, senderMemberId, senderMemberId === ME_MEMBER_ID ? '我' : line.senderLabel, isMe),
-        )
-      }
+    const resolved = options.index.resolve(line.senderLabel)
+    // 解析不到归属：以标签原文当成员标识（`me` 标签 = 登录账号，统一走 Me 标识）。
+    const senderMemberId = resolved ?? (line.senderLabel === ME_MEMBER_ID ? ME_MEMBER_ID : line.senderLabel)
+    // 立即外键兜底：成员返回体不列出登录账号（`me` 只是消息行里的标签），解析不到的标签也会回落为
+    // 标签原文 —— 这两类发送者都必须先给该群补一条占位成员，否则 `dm003_message` 的
+    // `(group_id, sender_key)` 立即外键会让整条消息丢失。
+    if (!options.index.has(senderMemberId) && !placeholders.has(senderMemberId)) {
+      const isMe = senderMemberId === ME_MEMBER_ID && options.markMe?.() === true
+      placeholders.set(
+        senderMemberId,
+        memberRecord(payload.username, senderMemberId, senderMemberId === ME_MEMBER_ID ? '我' : line.senderLabel, isMe),
+      )
     }
     records.push({
       messageId: messageIdOf({

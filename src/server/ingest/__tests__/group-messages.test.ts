@@ -57,7 +57,8 @@ describe('完整成功：写入顺序、完成时间与断点', () => {
 
     const outcome = await makeGroupAdapter(store, runner, clock).collect(collectContext())
 
-    expect(outcome).toMatchObject({ source: '群消息', status: 'succeeded', written: 1, completedAt: NOW })
+    // `written` = 经 API-003 成功写入的记录数（§3.3）：DM-002 群 1 + DM-004 成员 1 + DM-003 消息 1
+    expect(outcome).toMatchObject({ source: '群消息', status: 'succeeded', written: 3, completedAt: NOW })
     expect(outcome.subFailures).toEqual([])
     expect(outcome.checkpoint?.doneGroups).toEqual([GROUP_A])
     expect(store.groups.get(GROUP_A)).toEqual({ groupId: GROUP_A, groupName: '群一' })
@@ -123,7 +124,7 @@ describe('部分失败不阻塞 + 分项重试', () => {
       .on(cmd('sessions'), okReply(sessionsWithBothGroups()))
       .on(cmdFor('members', GROUP_A), okReply(membersJson({ group: '群一', username: GROUP_A, members: [{ username: 'wxid_a', displayName: '张三' }] })))
       .on(cmdFor('members', GROUP_B), okReply(membersJson({ group: '群二', username: GROUP_B, members: [{ username: 'wxid_b', displayName: '李四' }] })))
-      .on(cmdFor('history', GROUP_A), failReply(2)) // 参数非法：不重试、也不阻塞 g2
+      .on(cmdFor('history', GROUP_A), failReply(2), { once: true }) // 参数非法：不重试、也不阻塞 g2；仅首次运行生效
       .on(
         cmdFor('history', GROUP_B),
         okReply(historyJson({ username: GROUP_B, messages: [makeMessageLine('2026-09-01 10:30', '李四', '收到')] })),
@@ -133,7 +134,8 @@ describe('部分失败不阻塞 + 分项重试', () => {
     const first = await adapter.collect(collectContext())
 
     expect(first.status).toBe('failed')
-    expect(first.written).toBe(1)
+    // `written` = 经 API-003 成功写入的记录数（§3.3）：DM-002×2 + DM-004×2 + DM-003×1（g2 的消息）
+    expect(first.written).toBe(5)
     expect(first.failure).toMatchObject({ code: 'SOURCE_UNAVAILABLE', scope: `群消息:${GROUP_A}` })
     expect(first.subFailures.map((item) => item.scope)).toContain(`群消息:${GROUP_A}`)
     expect(store.groups.size).toBe(2) // 两个群的 DM-002 都已写入（失败不阻塞前置结构）
@@ -149,7 +151,8 @@ describe('部分失败不阻塞 + 分项重试', () => {
     const retried = await adapter.collect(collectContext({ checkpoint: first.checkpoint }))
 
     expect(retried.status).toBe('succeeded')
-    expect(retried.written).toBe(1)
+    // 只重跑 g1：DM-002 + DM-004 + DM-003 各 1 条（upsert 不失败 → 仍计入 written）
+    expect(retried.written).toBe(3)
     expect(store.messages.size).toBe(2)
     // 已完成分项 g2 不再执行（members / history 都只调用过一次）
     expect(runner.callsOf('members').filter((call) => call.args[1] === GROUP_B)).toHaveLength(1)
@@ -216,7 +219,8 @@ describe('部分失败不阻塞 + 分项重试', () => {
 
     const outcome = await makeGroupAdapter(store, runner, clock).collect(collectContext())
     expect(outcome.status).toBe('failed')
-    expect(outcome.written).toBe(1)
+    // 已成功行照常写入（群 / 成员 / 消息共 3 条）；CLI 逐条失败只进 subFailures，不静默
+    expect(outcome.written).toBe(3)
     expect(outcome.subFailures.map((item) => item.code)).toContain('SOURCE_UNAVAILABLE')
     expect(outcome.subFailures.some((item) => item.reason.includes('逐条失败 1 条'))).toBe(true)
   })

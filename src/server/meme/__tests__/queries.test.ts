@@ -340,7 +340,8 @@ describe('MOD-005 queryCell：梗单元装配（AC-049 ~ AC-057）', () => {
 
   it('精华超过展开上限（20）时截断并标记', async () => {
     const { port, store } = createStore()
-    port.seed('DM-006', [makeMeme({ memeId: 'A', groupId: GROUP, name: 'A' })])
+    // 梗行首现与出现记录一致（21 天）：DM-007 读取窗从 firstSeenAt 起（§8 决策 1 收敛读量）
+    port.seed('DM-006', [makeMeme({ memeId: 'A', groupId: GROUP, name: 'A', firstSeenAt: daysBefore(21) })])
     const messages = Array.from({ length: 21 }, (_, index) =>
       makeMessage({ messageId: `h${index + 1}`, groupId: GROUP, senderMemberId: 'u_a', sentAt: daysBefore(index + 1) }),
     )

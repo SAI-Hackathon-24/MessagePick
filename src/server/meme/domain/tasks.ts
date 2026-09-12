@@ -99,8 +99,9 @@ export function parseRecognition(
 }
 
 /**
- * 解析变体聚类结果：每个簇至少 2 个可回指且**同群**的梗成员（跨群成员被丢弃，REQ-040）；
- * 全部簇无效时按「来源引用缺失」失败。
+ * 解析变体聚类结果：成员取 `members` 字段（`taskParams.ts` 变体协议的必填项），
+ * 缺省时回退通用来源引用字段；每个簇至少 2 个可回指且**同群**的梗成员
+ * （跨群成员被丢弃，REQ-040）；全部簇无效时按「来源引用缺失」失败。
  */
 export function parseVariantClusters(
   result: TaskResult,
@@ -112,7 +113,7 @@ export function parseVariantClusters(
 
   for (const item of result.items) {
     const representativeName = asText(item.representative ?? item.name)
-    const memberIds = resolveRefs(item, units, new Set(memesById.keys()))
+    const memberIds = resolveRefs(item, units, new Set(memesById.keys()), ['members'])
     if (memberIds.length < 2) continue
 
     const representative = memberIds[0]
@@ -166,9 +167,17 @@ export function parseEssencePicks(
   return { ok: true, items: capped, sourceRefs: [...sourceRefs] }
 }
 
-/** 从条目里取来源引用并按 `units` 回指；只保留可回指的标识（保持出现顺序、去重）。 */
-function resolveRefs(item: TaskResultItem, units: readonly UnitRef[], allowed: ReadonlySet<Id>): Id[] {
-  const tokens = extractRefTokens(item)
+/**
+ * 从条目里取来源引用并按 `units` 回指；只保留可回指的标识（保持出现顺序、去重）。
+ * `preferredFields` 命中的字段优先（如变体条目的 `members`），未命中回退通用来源引用字段。
+ */
+function resolveRefs(
+  item: TaskResultItem,
+  units: readonly UnitRef[],
+  allowed: ReadonlySet<Id>,
+  preferredFields: readonly string[] = [],
+): Id[] {
+  const tokens = extractRefTokens(item, preferredFields)
   if (tokens.length === 0) return []
   const byMarker = new Map<string, Id>()
   for (const unit of units) {
@@ -196,7 +205,11 @@ function resolveRefsToMessages(
 }
 
 /** 从条目的来源引用字段 / 行内标记提取令牌（与 MOD-003 协议字段名保持一致）。 */
-function extractRefTokens(item: TaskResultItem): string[] {
+function extractRefTokens(item: TaskResultItem, preferredFields: readonly string[] = []): string[] {
+  for (const field of preferredFields) {
+    const value = item[field]
+    if (value !== undefined && value !== null) return flatten(value)
+  }
   for (const [key, value] of Object.entries(item)) {
     if (REF_FIELD_NAMES.has(key.trim().toLowerCase()) || REF_FIELD_NAMES.has(key.trim())) {
       return flatten(value)

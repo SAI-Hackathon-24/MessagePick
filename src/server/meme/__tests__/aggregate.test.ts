@@ -17,7 +17,7 @@ import {
 } from '../worker/aggregate'
 import { rejectionOf } from './harness'
 
-function makeInput(count: number, rootOf: Record<string, string | null> = { A: 'R1' }): AggregateInput {
+function makeInput(count: number, rootOf: Record<string, string | null> = { A: 'R1', B: 'R1' }): AggregateInput {
   return {
     occurrences: Array.from({ length: count }, (_, index) => ({
       memeId: index % 2 === 0 ? 'A' : 'B',

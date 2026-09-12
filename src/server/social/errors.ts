@@ -8,6 +8,14 @@
 
 import { ErrorCode, type ErrorEnvelope } from '@shared'
 
+/** 结构化日志口（字段与级别遵循详设 §6.1；`module` 固定 `MOD-007`，带 `requestId` / `taskRef`）。 */
+export interface SocialLogger {
+  debug?(event: string, fields?: Record<string, unknown>): void
+  info?(event: string, fields?: Record<string, unknown>): void
+  warn?(event: string, fields?: Record<string, unknown>): void
+  error?(event: string, fields?: Record<string, unknown>): void
+}
+
 /** 模块内错误：携带契约错误标识 + 失败边界 + 是否可重试。 */
 export class SocialError extends Error {
   readonly code: ErrorCode

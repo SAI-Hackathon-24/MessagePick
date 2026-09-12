@@ -23,6 +23,7 @@ import {
   daysBefore,
   failOutcome,
   makeDeps,
+  makeEdge,
   makeHighlight,
   makeMember,
   makeMessage,
@@ -393,6 +394,8 @@ describe('MOD-005 Orchestrator：精华分项与重复触发缺块判定（§3.6
       makeOccurrence({ memeId: 'm2', sourceMessageId: 'msg2', occurredAt: daysBefore(2) }),
       makeOccurrence({ memeId: 'm3', sourceMessageId: 'msg3', occurredAt: daysBefore(2) }),
     ])
+    // 变体缺块已关闭（上一批已聚类出边）：本批只剩精华缺块，便于隔离「精华单批上限」（§3.6 缺块判定）
+    port.seed('DM-008', [makeEdge('m1', 'm2')])
     const gateway = new FakeGateway()
     gateway.executeQueue.push(okOutcome('t1', [{ sourceRefs: ['msg1'] }]))
     const result = await new AnalysisOrchestrator(

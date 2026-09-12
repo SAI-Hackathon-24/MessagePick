@@ -76,7 +76,9 @@ describe('两个子项与来源标注', () => {
     const retried = await adapter.collect(collectContext({ checkpoint: first.checkpoint }))
 
     expect(retried.status).toBe('succeeded')
-    expect(retried.written).toBe(2)
+    // `written` = **本次运行**经 API-003 成功写入的记录数（§3.3）：只补「通讯录」1 条；
+    // 好友列表的 1 条是上一轮写入的，不在本次计数内（库里累计 = store.contacts.size = 2）
+    expect(retried.written).toBe(1)
     expect(runner.callsOf('sessions')).toHaveLength(1) // 已完成子项不再执行
     expect(store.contacts.size).toBe(2)
   })
