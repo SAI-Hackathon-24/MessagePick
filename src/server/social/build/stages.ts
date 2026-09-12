@@ -107,6 +107,11 @@ export function createWorkspace(): BuildWorkspace {
   }
 }
 
+/** 构建范围：`groupIds = null` = 全量（所有群）；数组 = 只对所选群的成员做模型抽取（群级增量构建）。 */
+export interface BuildScope {
+  groupIds: readonly string[] | null
+}
+
 /** 阶段运行环境（依赖全部注入；不建连、不读配置文件）。 */
 export interface StageEnv {
   store: SocialStorePort
@@ -119,6 +124,8 @@ export interface StageEnv {
   /** 模型任务重试表（幂等键 = `阶段:作用域`；失败 / 超时的任务引用在此等待 `API-008`）。 */
   retries: Map<string, TaskRef>
   workspace: BuildWorkspace
+  /** 构建范围（缺省 / `groupIds = null` = 全量）；只收敛阶段 3 / 6 的人员集合。 */
+  scope?: BuildScope
 }
 
 /** 阶段失败明细（错误码只取契约闭集；`taskRef` 供 `API-008` 重试）。 */
@@ -137,6 +144,22 @@ export interface StageOutcome {
 
 /** 每次模型任务的样本上限（护栏；取最近的消息）。 */
 export const SAMPLE_MESSAGE_LIMIT = 200
+
+/** 构建范围的群集合；`null` = 全量。 */
+function scopeGroupSet(env: StageEnv): ReadonlySet<string> | null {
+  const groups = env.scope?.groupIds
+  if (groups === undefined || groups === null || groups.length === 0) return null
+  return new Set(groups)
+}
+
+/** 构建范围内的人：至少一个成员身份属于所选群；全量时原样返回。 */
+function scopedPersons(env: StageEnv, allow: ReadonlySet<string> | null): Person[] {
+  if (allow === null) return env.workspace.persons
+  const groupOfMember = new Map(env.workspace.members.map((member) => [member.memberId, member.groupId]))
+  return env.workspace.persons.filter((person) =>
+    person.memberIds.some((memberId) => allow.has(groupOfMember.get(memberId) ?? '')),
+  )
+}
 
 // ---------------------------------------------------------------------------
 // 阶段 0 ~ 8
@@ -237,7 +260,8 @@ export async function runStage3(env: StageEnv): Promise<StageOutcome> {
   const linkRows = new Map(existingLinks)
   let dropped = 0
 
-  const targets = env.workspace.persons
+  /* 群级增量：只对构建范围内（所选群）的人跑模型抽取；样本口径不变（跨群历史，REQ-051） */
+  const targets = scopedPersons(env, scopeGroupSet(env))
     .filter((person) => !person.unknown) // 未知成员不进入抽取任务输入（决策 4）
     .map((person) => ({ person, samples: sampleMessagesOf(person, env.workspace.messages) }))
     .filter((entry) => entry.samples.length > 0)
@@ -363,7 +387,8 @@ export async function runStage6(env: StageEnv): Promise<StageOutcome> {
   const pending: PersonalityTag[] = []
   let dropped = 0
 
-  const targets = env.workspace.persons
+  /* 群级增量：只推断构建范围内的人（口径同阶段 3） */
+  const targets = scopedPersons(env, scopeGroupSet(env))
     .filter((person) => !person.unknown)
     .map((person) => ({ person, samples: sampleMessagesOf(person, env.workspace.messages) }))
     .filter((entry) => entry.samples.length > 0)

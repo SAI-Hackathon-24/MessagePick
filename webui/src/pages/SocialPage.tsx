@@ -39,15 +39,15 @@ export default function SocialPage() {
   const [pairB, setPairB] = useState('');
   const [extraTab, setExtraTab] = useState<'none' | 'graph' | 'timeline' | 'alignment' | 'mine'>('none');
 
-  const graph = useApi(() => api.relationGraph(), []);
-  const cards = useApi(() => api.interestScoreCards(), []);
-  const mine = useApi(() => api.myCompatibility(), []);
+  const graph = useApi(() => api.relationGraph(filter), [JSON.stringify(filter)]);
+  const cards = useApi(() => api.interestScoreCards(filter), [JSON.stringify(filter)]);
+  const mine = useApi(() => api.myCompatibility(filter), [JSON.stringify(filter)]);
   const roster = useApi(() => api.memberRoster(filter), [JSON.stringify(filter)]);
 
   // 成员列表来自「人的名单」（REQ-050）：未知成员也列出、不做推测（REQ-081）
   const people = roster.data ?? [];
-  // 首次进入：索引未就绪时会在后台构建（跨群口径、含模型任务）——给出明确提示
-  const awaitingBuild = !mine.data && !graph.data && (mine.loading || graph.loading);
+  // 画像按群构建（全量不自动跑）：索引未就绪 / 首次进入时给出明确提示与操作指引
+  const awaitingBuild = mine.error !== undefined || (!mine.data && !graph.data && (mine.loading || graph.loading));
 
   // 默认选中：名单就绪后落到真实成员（此前的示例标识已移除）
   useEffect(() => {
@@ -62,7 +62,11 @@ export default function SocialPage() {
   return (
     <div className="space-y-5">
       {awaitingBuild && (
-        <NoticeBar tone="sky">首次进入会在后台构建社交画像（跨群口径、含模型任务）；稍后刷新即可看到数据。</NoticeBar>
+        <NoticeBar tone="sky">
+          {filter.groupIds.length > 0
+            ? '正在按所选群构建社交画像（只对群内成员跑模型抽取，通常几分钟）；稍后刷新即可看到数据。'
+            : '社交画像按群构建：在筛选条选择群聊后自动开始（只跑该群成员，通常几分钟）。'}
+        </NoticeBar>
       )}
       {/* 指标 */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

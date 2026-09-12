@@ -863,6 +863,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     '/api/people/roster',
     handle('people:roster', (req, res) => {
       const filter = filterOf(req, 'people:roster')
+      social.ensureIndex?.(buildScopeOf(filter))
       res.json(success(metaOf(req), { people: rosterOf(filter?.groupIds ?? null, filter?.keyword ?? null) }))
     }),
   )
@@ -871,6 +872,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   app.get(
     '/api/social/graph',
     handle('social:graph', (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'social:graph')))
       res.json(success(metaOf(req), buildRelationGraph()))
     }),
   )
@@ -879,6 +881,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   app.get(
     '/api/interests/score-cards',
     handle('interests:score-cards', (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'interests:score-cards')))
       res.json(success(metaOf(req), { cards: buildScoreCards() }))
     }),
   )
@@ -887,6 +890,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   app.get(
     '/api/interests/event-streams',
     handle('interests:event-streams', (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'interests:event-streams')))
       res.json(success(metaOf(req), { streams: buildEventStreams() }))
     }),
   )
@@ -934,6 +938,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   app.get(
     '/api/me/fit',
     handle('me:fit', async (req, res) => {
+      social.ensureIndex?.(buildScopeOf(filterOf(req, 'me:fit')))
       res.json(success(metaOf(req), await social.getMyAffinity()))
     }),
   )
@@ -1596,6 +1601,12 @@ export function openPage(url: string): boolean {
 // ---------------------------------------------------------------------------
 // 组装辅助（保持路由处理器只做「取值 → 调端口 → 出信封」）
 // ---------------------------------------------------------------------------
+
+/** 构建范围：筛选条选了群 → 群级增量构建；未选群 → 全量。 */
+function buildScopeOf(filter: SharedFilter | null): { groupIds: readonly string[] | null } {
+  const groups = filter?.groupIds
+  return { groupIds: groups === undefined || groups === null || groups.length === 0 ? null : [...groups] }
+}
 
 /** 端口装配：MOD-007 的进程内索引 / 构建流水线 / 查询层共用同一实例（mod-007 §3.1）。 */
 function createSocialPort(store: Store, logger: ShellLogger): SocialProfileApi {

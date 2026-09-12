@@ -458,8 +458,10 @@ export const api = {
   },
 
   /** API-023 查询「我的社交契合度」：逐人列表 + 整体融入度（REQ-079） */
-  async myCompatibility(): Promise<ApiEnvelope<MyCompatibility>> {
-    const res = await request<Parameters<typeof toMyCompatibility>[0]>('GET', '/me/fit');
+  async myCompatibility(filter?: GlobalFilter): Promise<ApiEnvelope<MyCompatibility>> {
+    const res = await request<Parameters<typeof toMyCompatibility>[0]>('GET', '/me/fit', {
+      query: filter === undefined ? [] : filterQuery(filter),
+    });
     return res.ok ? { ok: true, data: toMyCompatibility(res.data) } : res;
   },
 
@@ -567,8 +569,10 @@ export const api = {
   },
 
   /** 展示-人-人关系图谱（REQ-069）：节点 = 全部人（未知者零连线），连线 = 共同爱好。 */
-  async relationGraph(): Promise<ApiEnvelope<RelationGraph>> {
-    const res = await request<RelationGraph>('GET', '/social/graph');
+  async relationGraph(filter?: GlobalFilter): Promise<ApiEnvelope<RelationGraph>> {
+    const res = await request<RelationGraph>('GET', '/social/graph', {
+      query: filter === undefined ? [] : filterQuery(filter),
+    });
     if (!res.ok) return res;
     rememberPeople(res.data.nodes);
     return res;
@@ -591,8 +595,10 @@ export const api = {
   },
 
   /** 展示-评分卡 / 仪表盘（REQ-068、REQ-078）：标签热度 + 逐人置信度。 */
-  async interestScoreCards(): Promise<ApiEnvelope<InterestScoreCard[]>> {
-    const res = await request<WireScoreCards>('GET', '/interests/score-cards');
+  async interestScoreCards(filter?: GlobalFilter): Promise<ApiEnvelope<InterestScoreCard[]>> {
+    const res = await request<WireScoreCards>('GET', '/interests/score-cards', {
+      query: filter === undefined ? [] : filterQuery(filter),
+    });
     if (!res.ok) return res;
     const cards = res.data.cards.map((row) => ({
       tagId: row.tagId,
