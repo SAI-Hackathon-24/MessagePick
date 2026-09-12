@@ -215,6 +215,8 @@ webui/                              # 浏览器界面（独立包：React + ECha
   开发期替身（`fixtures.ts` / `mock.ts`）已按 `REQ-019` / `AC-010` 删除；降级清单见 [`webui/README.md`](webui/README.md)
 - 页面托管：`npm run build` 的产物进 `webui/dist`，`npm start` 直接托管（同源 + 启动令牌，写操作全功能）
 - 怎么跑见 [`docs/USAGE.md`](docs/USAGE.md)；前端的自检见 [`webui/README.md`](webui/README.md)
+- **只想看界面**（不采集、不配模型）：用同级的演示版目录 `../webui/`（独立于本仓库，内置演示数据，
+  默认 <http://127.0.0.1:5273>）—— 启动方式与两份界面的区分见 [`docs/USAGE.md`](docs/USAGE.md) §10
 
 ## 许可与版权
 
