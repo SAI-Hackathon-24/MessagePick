@@ -1023,6 +1023,69 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }
   })
 
+  /**
+   * 采集完成后的预热（HLD 决策 9；`mod-004-app-shell.md` §4.5）。
+   *
+   * ⚠️ 此前**完全没有实现**：`runIngest` 只做 `ingest.trigger()` + `notifyDataEpoch()`，
+   * 全仓没有任何地方调用 `meme.startBatch('ingestDone')` 或 `extract.run(window)`，
+   * 配置项 `ingest.autoTriggerAfterIngest` 与 `kind:'warmup'` 都没有消费者。
+   * 后果是「更新数据」成功后 DM-006 / DM-010 永不生成，梗词云 / 梗生命周期 /
+   * 提取条目 / 通知总览 / 待办全部长期 NO_DATA —— 界面看起来「更新了但什么都没有」。
+   *
+   * 调用面（§4.5；全部是各模块已声明的入口，不新增接口）：
+   *   · MOD-005 `startBatch('ingestDone')`  —— 后台生成梗
+   *   · MOD-006 `run(window)`               —— 窗口语义由该模块自己按增量水位推导，
+   *                                            这里只传采集完成时刻
+   *   · MOD-007 无入参接口取数预热（`API-023` / `API-025`）
+   *   · MOD-008 不参与后台预热
+   * 每模块一条 `kind='warmup'` 操作（scope = 模块 ID）；预热失败**不阻塞**
+   * update 响应（后台跑，失败只收敛操作状态）。
+   */
+  function runWarmup(completedAt: number): void {
+    if (!config.ingest.autoTriggerAfterIngest) return
+
+    const warm = (moduleId: string, task: () => Promise<unknown>, settle: (value: unknown) => { state: ShellOperation['state']; error?: ErrorEnvelope }): void => {
+      const id = tracker.start({ kind: 'warmup', scope: moduleId })
+      tracker.update(id, { state: 'running' })
+      /**
+       * ⚠️ 必须先包一层 `Promise.resolve().then(task)` 再挂 `.catch`：
+       * 部分模块入口（如 `meme.startBatch`）是**同步抛错**，
+       * 直接 `task().catch()` 会在挂上 catch 之前就抛出，冒泡成 update 的 500 ——
+       * 那就违背了「预热失败不阻塞更新响应」。
+       */
+      void Promise.resolve()
+        .then(task)
+        .then((value) => {
+          const next = settle(value)
+          tracker.update(id, next.error === undefined ? { state: next.state } : { state: next.state, error: next.error })
+        })
+        .catch((error: unknown) => {
+          tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, `warmup:${moduleId}`) })
+          logger.warn('warmup.failed', { module: moduleId, error: error instanceof Error ? error.message : String(error) })
+        })
+    }
+
+    // MOD-005：后台批量生成梗（scope 取空 = 不限）
+    warm('MOD-005', () => Promise.resolve(meme.startBatch('ingestDone')), () => ({ state: 'succeeded' }))
+
+    // MOD-006：以采集完成时刻为窗口终点跑一批抽取
+    warm(
+      'MOD-006',
+      () => extract.run({ from: completedAt, to: completedAt }),
+      (value) => {
+        const result = value as { status?: string } | undefined
+        return { state: result?.status === 'failed' ? 'failed' : 'succeeded' }
+      },
+    )
+
+    // MOD-007：无入参取数预热（触发该模块的懒构建与缓存），两条都是读路径
+    warm(
+      'MOD-007',
+      () => Promise.all([social.getMyAffinity(), social.listIdentityCandidates()]),
+      () => ({ state: 'succeeded' }),
+    )
+  }
+
   async function runIngest(req: Request, res: Response, request: Api001Request): Promise<void> {
     const scope: string = request.targetSource ?? '全部来源'
     const id = tracker.start({ kind: 'ingest', scope })
@@ -1045,6 +1108,10 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         }
         // 采集会推进 dataEpoch：同步引擎注册表（详设 §3.3 / 引擎 §5.3）
         notifyDataEpoch(currentEpoch(store))
+        if (outcome.ok) {
+          // 预热（§4.5）：后台发起，不阻塞本次响应；失败只收敛 warmup 操作状态
+          runWarmup(clock())
+        }
         if (outcome.ok) {
           res.json(success(metaOf(req), outcome.data))
         } else {
