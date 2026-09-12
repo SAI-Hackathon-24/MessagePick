@@ -1998,7 +1998,7 @@ function materialItemsOf(record: Record<string, unknown>): MaterialItem[] {
   })
 }
 
-/** 设置补丁结构校验 + 边界（详设 §7：并发 1–8；凭据值可为空串 = 清除）。 */
+/** 设置补丁结构校验 + 边界（详设 §7；并发 1–64——2026-09-13 校准：云端端点并发余量充足；凭据值可为空串 = 清除）。 */
 function settingsPatchOf(req: Request): SettingsPatch {
   const scope = 'settings'
   const record = optionalBody(req, scope)
@@ -2011,11 +2011,10 @@ function settingsPatchOf(req: Request): SettingsPatch {
     if (model['baseUrl'] !== undefined) next.baseUrl = bodyString(model, 'baseUrl', scope) ?? ''
     if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
     if (model['apiKey'] !== undefined) next.apiKey = bodyString(model, 'apiKey', scope) ?? ''
-    if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
     const concurrency = bodyInt(model, 'taskConcurrency', scope)
     if (concurrency !== null) {
-      if (concurrency < 1 || concurrency > 8) {
-        throw invalidInput('model.taskConcurrency 需在 1–8 之间', scope, { field: 'taskConcurrency', min: 1, max: 8 })
+      if (concurrency < 1 || concurrency > 64) {
+        throw invalidInput('model.taskConcurrency 需在 1–64 之间', scope, { field: 'taskConcurrency', min: 1, max: 64 })
       }
       next.taskConcurrency = concurrency
     }
