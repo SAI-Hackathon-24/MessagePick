@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --mp-bg: #f6f7f9;
+    --mp-panel: #ffffff;
+    --mp-line: rgba(11, 15, 23, 0.08);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-ink-50 text-ink-800 font-sans antialiased;
+    /* 宣纸质感：极淡的网格 + 径向光晕 */
+    background-image:
+      radial-gradient(1200px 600px at 12% -8%, rgba(7, 193, 96, 0.1), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(245, 158, 11, 0.08), transparent 55%),
+      linear-gradient(to right, rgba(11, 15, 23, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(11, 15, 23, 0.035) 1px, transparent 1px);
+    background-size: auto, auto, 28px 28px, 28px 28px;
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    @apply bg-jade-500/25;
+  }
+
+  /* 细滚动条 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-ink-300/60;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-400/70;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* ---- 卡片体系：所有内容单元的基础容器 ---- */
+  .mp-card {
+    @apply rounded-2xl border border-ink-900/[0.07] bg-white/85 shadow-card backdrop-blur-sm transition-shadow;
+  }
+  .mp-card-hover {
+    @apply hover:shadow-card-hover hover:border-jade-500/30;
+  }
+  .mp-panel {
+    @apply rounded-2xl border border-ink-900/[0.07] bg-white/70 backdrop-blur;
+  }
+
+  /* ---- 标签 / 徽章 ---- */
+  .mp-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-ink-900/[0.07] bg-white px-2.5 py-1 text-xs font-medium text-ink-600 transition-colors;
+  }
+  .mp-chip-active {
+    @apply border-jade-500/40 bg-jade-500/10 text-jade-700;
+  }
+
+  /* ---- 骨架屏 ---- */
+  .mp-skeleton {
+    @apply animate-pulse-soft rounded-lg bg-ink-200/70;
+  }
+
+  /* ---- 分区标题 ---- */
+  .mp-section-title {
+    @apply text-sm font-semibold tracking-wide text-ink-500;
+  }
+
+  /* ---- 数据标注（来源/口径提示） ---- */
+  .mp-meta {
+    @apply text-[11px] leading-relaxed text-ink-400;
+  }
+}
+
+@layer utilities {
+  .mp-scroll-x {
+    scrollbar-width: thin;
+  }
+  .mp-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .mp-sticky-head {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  /* 时间轴热力色阶工具类由 heatColor() 动态生成，见 src/lib/format.ts */
+}
