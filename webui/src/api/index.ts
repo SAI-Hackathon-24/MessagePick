@@ -119,6 +119,14 @@ const invalid = (message: string, hint?: string): ApiEnvelope<never> => ({
   error: { code: 'INVALID_INPUT', message, ...(hint === undefined ? {} : { hint }) },
 });
 
+/** 模型服务状态一行文案（地址 / 模型名 / 密钥三态的短描述；不回显密钥值）。 */
+function modelEndpointSummary(model: SettingsView['model']): string {
+  if (model.baseUrl.length === 0) return '（未配置，可在设置页填写）';
+  const name = model.name.length > 0 ? `模型 ${model.name}` : '尚未填写模型名';
+  const key = model.apiKeyConfigured ? '密钥已配置' : '尚未配置密钥';
+  return `${model.baseUrl}（${name}；${key}）`;
+}
+
 /** 展示组装路由的线格式（外壳非契约接口）。 */
 interface WireEventStreams {
   streams: Array<{
@@ -176,7 +184,7 @@ export interface DataVolume {
 
 /** 外壳设置视图（GET/PUT `/api/settings`；密钥只写不读回）。 */
 export interface SettingsView {
-  model: { baseUrl: string; apiKeyConfigured: boolean; taskConcurrency: number };
+  model: { baseUrl: string; name: string; apiKeyConfigured: boolean; taskConcurrency: number };
   ingest: { autoTriggerAfterIngest: boolean; pageSize: number };
   server: { port: number };
   log: { level: string; retentionDays: number };
@@ -184,12 +192,12 @@ export interface SettingsView {
 
 /** 设置补丁（部分更新；缺省字段保持不变，`apiKey` 不传表示不改）。 */
 export interface SettingsPatch {
-  model?: { baseUrl?: string; apiKey?: string; taskConcurrency?: number };
+  model?: { baseUrl?: string; name?: string; apiKey?: string; taskConcurrency?: number };
   ingest?: { autoTriggerAfterIngest?: boolean };
   log?: { level?: string };
 }
 
-/** 数据去向说明（纯静态文案；REQ-012 / AC-030 的两处展示共用一份）。 */
+/** 数据去向说明的文案基线（REQ-012 / AC-030 的两处展示共用一份；模型服务一行按当前设置覆盖）。 */
 const DATA_FLOW_NOTICE: DataFlowNotice = {
   modelEndpoint: '（未配置，可在设置页填写）',
   statements: [
@@ -249,9 +257,10 @@ export const api = {
     return res.ok ? { ok: true, data: toDeletion(res.data) } : res;
   },
 
-  /** 数据去向说明（REQ-012 / AC-030）：纯静态文案（无服务端数据） */
+  /** 数据去向说明（REQ-012 / AC-030）：文案基线 + 按当前设置组装模型服务状态（不回显凭据）。 */
   async dataFlowNotice(): Promise<ApiEnvelope<DataFlowNotice>> {
-    return { ok: true, data: DATA_FLOW_NOTICE };
+    const res = await request<SettingsView>('GET', '/settings');
+    return { ok: true, data: { ...DATA_FLOW_NOTICE, modelEndpoint: res.ok ? modelEndpointSummary(res.data.model) : DATA_FLOW_NOTICE.modelEndpoint } };
   },
 
   /* ================= MOD-005 模块一：梗分析 ================= */

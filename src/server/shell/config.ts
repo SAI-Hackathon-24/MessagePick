@@ -25,6 +25,8 @@ export interface ShellConfig {
   model: {
     /** 模型服务地址（OpenAI 兼容）；空 = 未配置 */
     baseUrl: string
+    /** 模型名（`model.name`，mod-003 决策 8 的配置键）；空 = 未配置 */
+    name: string
     /** 模型凭据；只写不读回（详设 §4.3） */
     apiKey: string
     /** 模型任务并发上限（1–8） */
@@ -68,7 +70,7 @@ export interface ShellConfig {
 
 /** 默认值（详设 §7 表格的「默认值」列，逐项对应）。 */
 export const DEFAULT_CONFIG: ShellConfig = {
-  model: { baseUrl: '', apiKey: '', taskConcurrency: 4 },
+  model: { baseUrl: '', name: '', apiKey: '', taskConcurrency: 4 },
   cli: { executable: '', stateDir: '' },
   server: { port: 0 },
   timeouts: { cliCommandMs: 120_000, modelCallMs: 90_000, renderMs: 30_000 },
@@ -79,7 +81,7 @@ export const DEFAULT_CONFIG: ShellConfig = {
 
 /** 可提交的设置补丁（只含使用者可改项；页面 `SettingsPatch` 的同源结构）。 */
 export interface SettingsPatch {
-  model?: { baseUrl?: string; apiKey?: string; taskConcurrency?: number }
+  model?: { baseUrl?: string; name?: string; apiKey?: string; taskConcurrency?: number }
   ingest?: { autoTriggerAfterIngest?: boolean }
   log?: { level?: ShellLogLevel }
 }
@@ -183,6 +185,7 @@ export function normalizeConfig(raw: unknown): { config: ShellConfig; issues: st
     config: {
       model: {
         baseUrl: stringValue(model['baseUrl'], DEFAULT_CONFIG.model.baseUrl, 'model.baseUrl', issues),
+        name: stringValue(model['name'], DEFAULT_CONFIG.model.name, 'model.name', issues),
         apiKey: stringValue(model['apiKey'], DEFAULT_CONFIG.model.apiKey, 'model.apiKey', issues),
         taskConcurrency: intValue(
           model['taskConcurrency'],
@@ -293,7 +296,7 @@ export function saveConfig(dataDir: string, config: ShellConfig): void {
 
 /** 设置页只读视图（凭据只给「是否已配置」；详设 §4.3）。 */
 export interface SettingsView {
-  model: { baseUrl: string; apiKeyConfigured: boolean; taskConcurrency: number }
+  model: { baseUrl: string; name: string; apiKeyConfigured: boolean; taskConcurrency: number }
   ingest: { autoTriggerAfterIngest: boolean; pageSize: number }
   cli: { executable: string; stateDir: string }
   server: { port: number }
@@ -307,6 +310,7 @@ export function settingsViewOf(config: ShellConfig): SettingsView {
   return {
     model: {
       baseUrl: config.model.baseUrl,
+      name: config.model.name,
       apiKeyConfigured: config.model.apiKey.length > 0,
       taskConcurrency: config.model.taskConcurrency,
     },
@@ -340,6 +344,10 @@ export function applySettingsPatch(config: ShellConfig, patch: SettingsPatch): P
     if (patch.model.baseUrl !== undefined && patch.model.baseUrl !== next.model.baseUrl) {
       next.model.baseUrl = patch.model.baseUrl
       changed.push('model.baseUrl')
+    }
+    if (patch.model.name !== undefined && patch.model.name !== next.model.name) {
+      next.model.name = patch.model.name
+      changed.push('model.name')
     }
     if (patch.model.apiKey !== undefined && patch.model.apiKey !== next.model.apiKey) {
       next.model.apiKey = patch.model.apiKey

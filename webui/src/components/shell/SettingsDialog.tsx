@@ -28,6 +28,7 @@ export function SettingsDialog() {
   // 模型服务设置（分析任务依赖；REQ-016：失败可见、不静默）
   const settings = useApi(() => api.settings(), [settingsOpen]);
   const [modelBaseUrl, setModelBaseUrl] = useState('');
+  const [modelName, setModelName] = useState('');
   const [modelApiKey, setModelApiKey] = useState('');
   const [taskConcurrency, setTaskConcurrency] = useState(4);
   const [autoTrigger, setAutoTrigger] = useState(true);
@@ -39,6 +40,7 @@ export function SettingsDialog() {
     const view = settings.data;
     if (view === null) return;
     setModelBaseUrl(view.model.baseUrl);
+    setModelName(view.model.name);
     setTaskConcurrency(view.model.taskConcurrency);
     setAutoTrigger(view.ingest.autoTriggerAfterIngest);
   }, [settings.data]);
@@ -50,6 +52,7 @@ export function SettingsDialog() {
     const patch: SettingsPatch = {
       model: {
         baseUrl: modelBaseUrl.trim(),
+        name: modelName.trim(),
         ...(modelApiKey.trim().length > 0 ? { apiKey: modelApiKey.trim() } : {}),
         taskConcurrency,
       },
@@ -62,7 +65,7 @@ export function SettingsDialog() {
       return;
     }
     setModelApiKey('');
-    setSaveMsg(`已保存。模型服务：${res.data.model.baseUrl.length > 0 ? res.data.model.baseUrl : '未配置'}；密钥：${res.data.model.apiKeyConfigured ? '已配置' : '未配置'}。`);
+    setSaveMsg(`已保存。模型服务：${res.data.model.baseUrl.length > 0 ? res.data.model.baseUrl : '未配置'}｜模型名：${res.data.model.name.length > 0 ? res.data.model.name : '未配置'}；密钥：${res.data.model.apiKeyConfigured ? '已配置' : '未配置'}。`);
     settings.refetch();
   };
 
@@ -115,13 +118,13 @@ export function SettingsDialog() {
                 {s}
               </li>
             ))}
-            <li className="mp-meta">模型服务地址：{flow.data?.modelEndpoint ?? '—'}（可在配置中修改）</li>
+            <li className="mp-meta">模型服务：{flow.data?.modelEndpoint ?? '—'}（在「设置 → 模型服务」中修改）</li>
           </ul>
         </Card>
 
         {/* 模型服务（分析任务依赖） */}
         <Card>
-          <CardHeader title="模型服务" icon={Cpu} subtitle="梗分析 / 信息提取 / 社交画像走模型任务；未配置时采集仍可用，但自动分析会失败" />
+          <CardHeader title="模型服务" icon={Cpu} subtitle="梗分析 / 信息提取 / 社交画像走模型任务；地址 / 模型名 / 密钥三项缺一不可（未配置时采集仍可用，但自动分析会失败）" />
           <div className="space-y-3 px-4 py-4">
             <label className="block space-y-1">
               <span className="mp-meta">服务地址（OpenAI 兼容）</span>
@@ -130,6 +133,16 @@ export function SettingsDialog() {
                 value={modelBaseUrl}
                 onChange={(e) => setModelBaseUrl(e.target.value)}
                 placeholder="例如 https://api.example.com/v1"
+                className="w-full rounded-xl border border-ink-900/[0.08] bg-white/80 px-3 py-1.5 text-xs text-ink-700 outline-none placeholder:text-ink-300 focus:border-jade-500/50"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="mp-meta">模型名（请求体 `model` 字段，如 gpt-4o-mini / qwen2.5:7b）</span>
+              <input
+                data-testid="settings-model-name"
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+                placeholder="例如 gpt-4o-mini"
                 className="w-full rounded-xl border border-ink-900/[0.08] bg-white/80 px-3 py-1.5 text-xs text-ink-700 outline-none placeholder:text-ink-300 focus:border-jade-500/50"
               />
             </label>

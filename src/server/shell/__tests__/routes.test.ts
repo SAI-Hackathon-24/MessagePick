@@ -406,6 +406,15 @@ describe('写路由（令牌守卫与入参校验）', () => {
     expect(seen['identity']).toEqual({ candidateId: 'c1', conclusion: '确认' })
   })
 
+  it('GET/PUT /api/settings：模型名可读回；凭据只回「已配置」不回值', async () => {
+    const saved = (await jsonOf(await write('PUT', '/api/settings', { model: { baseUrl: 'http://127.0.0.1:9999/v1', name: 'test-model', apiKey: 'sk-test-secret', taskConcurrency: 2 } })))['data'] as { model: Record<string, unknown> }
+    expect(saved.model).toMatchObject({ baseUrl: 'http://127.0.0.1:9999/v1', name: 'test-model', apiKeyConfigured: true, taskConcurrency: 2 })
+    expect(JSON.stringify(saved)).not.toContain('sk-test-secret')
+
+    const view = (await jsonOf(await get('/api/settings')))['data'] as { model: Record<string, unknown> }
+    expect(view.model['name']).toBe('test-model')
+  })
+
   it('POST /api/update：群消息采集成功 → 后台触发预热（梗批次 + 信息提取，登记两条操作）', async () => {
     seen['memeBatch'] = undefined
     seen['extractRun'] = undefined

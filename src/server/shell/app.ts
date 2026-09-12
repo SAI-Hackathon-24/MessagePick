@@ -1488,6 +1488,7 @@ function applyEngineConfig(config: ShellConfig): void {
   configureEngine({
     model: {
       baseUrl: config.model.baseUrl,
+      name: config.model.name,
       apiKey: config.model.apiKey,
       taskConcurrency: config.model.taskConcurrency,
     },
@@ -1648,6 +1649,7 @@ function settingsPatchOf(req: Request): SettingsPatch {
     const model = bodyRecord(modelRaw, `${scope}.model`)
     const next: NonNullable<SettingsPatch['model']> = {}
     if (model['baseUrl'] !== undefined) next.baseUrl = bodyString(model, 'baseUrl', scope) ?? ''
+    if (model['name'] !== undefined) next.name = bodyString(model, 'name', scope) ?? ''
     if (model['apiKey'] !== undefined) next.apiKey = bodyString(model, 'apiKey', scope) ?? ''
     const concurrency = bodyInt(model, 'taskConcurrency', scope)
     if (concurrency !== null) {
@@ -1682,6 +1684,7 @@ function settingsPatchOf(req: Request): SettingsPatch {
 /** 补丁并入配置（只改补丁给出的键；`server.port` 不在补丁面内 = 下次启动生效）。 */
 function applySettings(config: ShellConfig, patch: SettingsPatch): void {
   if (patch.model?.baseUrl !== undefined) config.model.baseUrl = patch.model.baseUrl
+  if (patch.model?.name !== undefined) config.model.name = patch.model.name
   if (patch.model?.apiKey !== undefined) config.model.apiKey = patch.model.apiKey
   if (patch.model?.taskConcurrency !== undefined) config.model.taskConcurrency = patch.model.taskConcurrency
   if (patch.ingest?.autoTriggerAfterIngest !== undefined) {
