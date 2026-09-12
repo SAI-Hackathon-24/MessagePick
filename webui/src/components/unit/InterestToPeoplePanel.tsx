@@ -12,7 +12,7 @@ import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
 import { INTEREST_CATEGORIES, INTEREST_CATEGORY_LABEL, type InterestCategory } from '@/types';
-import { Avatar, Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar } from '@/components/ui';
+import { Avatar, Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar, BuildingState } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 
 export function InterestToPeoplePanel() {
@@ -82,7 +82,11 @@ export function InterestToPeoplePanel() {
         </div>
       </Card>
 
-      {result.error && <ErrorState error={result.error} onRetry={result.refetch} onClearFilter={clearFilter} />}
+      {/* 构建中：IDENTITY_NOT_READY 是契约规定的正常中间态（索引在阶段 8 才物化） */}
+      {result.error?.code === 'IDENTITY_NOT_READY' && <BuildingState />}
+      {result.error && result.error.code !== 'IDENTITY_NOT_READY' && (
+        <ErrorState error={result.error} onRetry={result.refetch} onClearFilter={clearFilter} />
+      )}
 
       {result.loading && !result.data ? (
         <LoadingState label="正在检索…" rows={3} />
