@@ -13,7 +13,7 @@
  * 写入走 `PUT /api/settings` 的 `ingest.analysisGroupIds`（需要启动令牌）。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, Check, Users } from 'lucide-react';
+import { Activity, Check, Sparkles, Users } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
@@ -29,7 +29,24 @@ export function AnalysisGroupPicker({ onSaved }: { onSaved?: () => void }) {
   const groups = useApi(() => api.groups(), []);
   const [selected, setSelected] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  /**
+   * 立即分析选中的群（`POST /api/analyze`）：
+   * 只跑分析、不重新采集 —— 数据早就在库里时不必再采一次。
+   * 接口立即返回，真正进度看操作面板（分析是逐群逐人的模型调用，可能要几分钟）。
+   */
+  const analyzeNow = async (): Promise<void> => {
+    setAnalyzing(true);
+    const res = await api.analyze(current);
+    setAnalyzing(false);
+    setMessage(
+      res.ok
+        ? `已开始分析 ${current.length} 个群。分析要逐群逐人调用模型，可能要几分钟；进度见「更新数据」旁的操作状态。`
+        : `启动分析失败：${res.error?.message ?? '未知错误'}（${res.error?.code ?? 'UNKNOWN'}）`,
+    );
+  };
 
   /** 首次拿到服务端值后落到本地状态（之后由用户编辑）。 */
   useEffect(() => {
@@ -108,6 +125,16 @@ export function AnalysisGroupPicker({ onSaved }: { onSaved?: () => void }) {
           </Button>
           <Button size="sm" data-testid="save-analysis-scope" disabled={!dirty || busy} onClick={() => void save()}>
             {busy ? '保存中…' : '保存'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={Sparkles}
+            data-testid="analyze-now"
+            disabled={analyzing || current.length === 0}
+            onClick={() => void analyzeNow()}
+          >
+            {analyzing ? '已开始分析…' : `立即分析这 ${current.length} 个群`}
           </Button>
           {dirty && <span className="mp-meta">有未保存的改动</span>}
         </div>

@@ -166,6 +166,18 @@ export const api = {
   /* ================= MOD-001 数据接入与更新 ================= */
 
   /**
+   * 按需触发分析（`POST /api/analyze`，非契约接口）。
+   *
+   * 只跑分析、**不做采集**：用于「数据早就采过了，现在想看这几个群」。
+   * 不传 `groupIds` = 分析全部群。接口立即返回，进度看 `operations`。
+   */
+  async analyze(groupIds?: string[]): Promise<ApiEnvelope<{ started: boolean; groups: number | string }>> {
+    return request<{ started: boolean; groups: number | string }>('POST', '/analyze', {
+      body: groupIds === undefined || groupIds.length === 0 ? {} : { groupIds },
+    });
+  },
+
+  /**
    * 读取分析范围（`GET /api/settings` 的 `ingest` 子集）。
    *
    * 产品口径：**导入只入库，不默认分析**。分析要对每个群逐人调用模型
