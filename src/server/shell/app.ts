@@ -1613,8 +1613,18 @@ function settingsPatchOf(req: Request): SettingsPatch {
   const ingestRaw = record['ingest']
   if (ingestRaw !== undefined && ingestRaw !== null) {
     const ingest = bodyRecord(ingestRaw, `${scope}.ingest`)
+    const nextIngest: NonNullable<SettingsPatch['ingest']> = {}
     const autoTrigger = bodyBoolean(ingest, 'autoTriggerAfterIngest', scope)
-    if (autoTrigger !== null) patch.ingest = { autoTriggerAfterIngest: autoTrigger }
+    if (autoTrigger !== null) nextIngest.autoTriggerAfterIngest = autoTrigger
+    // 待分析群（产品口径：空数组 = 不分析任何群）
+    const groupIdsRaw = ingest['analysisGroupIds']
+    if (groupIdsRaw !== undefined && groupIdsRaw !== null) {
+      if (!Array.isArray(groupIdsRaw)) throw invalidInput('ingest.analysisGroupIds 需为字符串数组', scope)
+      nextIngest.analysisGroupIds = [
+        ...new Set(groupIdsRaw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter((v) => v.length > 0)),
+      ]
+    }
+    if (Object.keys(nextIngest).length > 0) patch.ingest = nextIngest
   }
 
   const logRaw = record['log']
@@ -1638,6 +1648,9 @@ function applySettings(config: ShellConfig, patch: SettingsPatch): void {
   if (patch.model?.taskConcurrency !== undefined) config.model.taskConcurrency = patch.model.taskConcurrency
   if (patch.ingest?.autoTriggerAfterIngest !== undefined) {
     config.ingest.autoTriggerAfterIngest = patch.ingest.autoTriggerAfterIngest
+  }
+  if (patch.ingest?.analysisGroupIds !== undefined) {
+    config.ingest.analysisGroupIds = [...patch.ingest.analysisGroupIds]
   }
   if (patch.log?.level !== undefined) config.log.level = patch.log.level
 }

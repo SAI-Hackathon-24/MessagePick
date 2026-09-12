@@ -16,6 +16,7 @@
  * 错误一律按 `api-contract.md` §1.2 的稳定标识返回（不静默失败 —— REQ-016）。
  */
 import {
+  type AnalysisScopeView,
   type ApiEnvelope,
   type DataFlowNotice,
   type DeletePrecheck,
@@ -163,6 +164,44 @@ const DATA_FLOW_NOTICE: DataFlowNotice = {
 /* -------------------------------------------------------------------------- */
 export const api = {
   /* ================= MOD-001 数据接入与更新 ================= */
+
+  /**
+   * 读取分析范围（`GET /api/settings` 的 `ingest` 子集）。
+   *
+   * 产品口径：**导入只入库，不默认分析**。分析要对每个群逐人调用模型
+   * （实测 22 个群约 20 分钟），因此由使用者选定「待分析群」后再跑。
+   */
+  async analysisScope(): Promise<ApiEnvelope<AnalysisScopeView>> {
+    const res = await request<{ ingest?: { analysisGroupIds?: string[]; autoTriggerAfterIngest?: boolean } }>('GET', '/settings');
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      data: {
+        analysisGroupIds: res.data.ingest?.analysisGroupIds ?? [],
+        autoTriggerAfterIngest: res.data.ingest?.autoTriggerAfterIngest ?? true,
+      },
+    };
+  },
+
+  /**
+   * 写入「待分析群」（`PUT /api/settings`）。空数组 = 不分析任何群。
+   * 需要启动令牌（无令牌时服务端 403，界面应提示从应用入口重开页面）。
+   */
+  async setAnalysisGroups(groupIds: string[]): Promise<ApiEnvelope<AnalysisScopeView>> {
+    const res = await request<{ ingest?: { analysisGroupIds?: string[]; autoTriggerAfterIngest?: boolean } }>(
+      'PUT',
+      '/settings',
+      { body: { ingest: { analysisGroupIds: groupIds } } },
+    );
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      data: {
+        analysisGroupIds: res.data.ingest?.analysisGroupIds ?? [],
+        autoTriggerAfterIngest: res.data.ingest?.autoTriggerAfterIngest ?? true,
+      },
+    };
+  },
 
   /** API-002 查询更新状态：首屏引导与「记录更新至 X」（REQ-002、REQ-003） */
   async updateStatus(): Promise<ApiEnvelope<UpdateStatus>> {

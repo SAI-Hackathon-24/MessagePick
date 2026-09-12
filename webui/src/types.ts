@@ -181,6 +181,20 @@ export interface UpdateResult {
 export interface Group {
   id: string;
   name: string;
+  /**
+   * 活跃度派生值（服务端从 DM-003 现算，不落库、不进契约）：
+   * 群清单按 `lastMessageAt` 倒序返回，界面据此把最活跃的群排在前面。
+   */
+  messageCount?: number;
+  lastMessageAt?: number | null;
+}
+
+/** 分析范围设置（`GET` / `PUT /api/settings` 的 `ingest` 子集 + 只读回显）。 */
+export interface AnalysisScopeView {
+  /** 待分析群：**空数组 = 不分析任何群**（导入只入库） */
+  analysisGroupIds: string[];
+  /** 采集完成后是否自动触发分析（还需 `analysisGroupIds` 非空才真正发起） */
+  autoTriggerAfterIngest: boolean;
 }
 
 /** DM-003 原始消息记录：全部结论的来源事实，可回跳原文的终点（REQ-007） */

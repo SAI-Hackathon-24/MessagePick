@@ -13,6 +13,7 @@ import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
 import type { DeletePrecheck, DeleteScope } from '@/types';
 import { Button } from './Button';
+import { AnalysisGroupPicker } from './AnalysisGroupPicker';
 import { Badge, Card, CardHeader, Drawer, ErrorState, LoadingState, NoticeBar } from '@/components/ui';
 
 export function SettingsDialog() {
@@ -64,6 +65,12 @@ export function SettingsDialog() {
       subtitle="数据去向说明与隐私删除。本应用不提供任何对外分享 / 发送通道。"
     >
       <div className="space-y-5">
+        {/*
+          待分析群（产品口径：导入只入库、不默认分析）。
+          放在最上面：它决定「更新之后会不会有结果」，是使用前最该先决定的一项。
+        */}
+        <AnalysisGroupPicker onSaved={() => refreshStatus()} />
+
         {/* 数据去向（REQ-012） */}
         <Card>
           <CardHeader title="数据去向" icon={ShieldCheck} subtitle="首次使用与设置页各展示一处（REQ-012 / AC-030）" />

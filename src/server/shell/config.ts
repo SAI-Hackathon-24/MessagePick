@@ -398,6 +398,10 @@ export function applySettingsPatch(config: ShellConfig, patch: SettingsPatch): P
     next.ingest.autoTriggerAfterIngest = patch.ingest.autoTriggerAfterIngest
     changed.push('ingest.autoTriggerAfterIngest')
   }
+  if (patch.ingest?.analysisGroupIds !== undefined) {
+    next.ingest.analysisGroupIds = [...patch.ingest.analysisGroupIds]
+    changed.push('ingest.analysisGroupIds')
+  }
   if (patch.log?.level !== undefined && patch.log.level !== next.log.level) {
     next.log.level = patch.log.level
     changed.push('log.level')
