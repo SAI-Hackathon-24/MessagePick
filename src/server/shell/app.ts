@@ -29,7 +29,8 @@ import express, { type Express, type NextFunction, type Request, type RequestHan
 import { configureEngine, notifyDataEpoch, shutdownEngine } from '@server/engine'
 import { createExtractModule, type ExtractModule } from '@server/extract'
 import { createIngestModule, type IngestModule } from '@server/ingest'
-import type { MaterialItem } from '@server/regen'
+import { createMemeModule, type MemeModule } from '@server/meme'
+import { readArtifact, submitMaterialConsent, type MaterialItem } from '@server/regen'
 import {
   createProfileBuildPipeline,
   createSocialProfileApi,
@@ -37,8 +38,33 @@ import {
   SocialIndex,
 } from '@server/social'
 import { createStore, type Store } from '@server/store'
-import type { Api001Request, DeletionScope, ErrorEnvelope, MemberHint, MessageDetail, SharedFilter } from '@shared'
-import { INGEST_SOURCES } from '@shared'
+import {
+  CLOUD_LAYOUTS,
+  CLOUD_SIZE_BASES,
+  CORRECTION_TYPES,
+  DIMENSIONS,
+  IDENTITY_DECISIONS,
+  INGEST_SOURCES,
+  INTEREST_TAG_ACTIONS,
+  MINE_VIEWS,
+  NOTIFICATION_DIMENSIONS,
+  PEOPLE_SEARCH_ENTRIES,
+  PERSONALITY_DIMENSIONS,
+  PERSONALITY_TAG_ACTIONS,
+  PRIORITIES,
+  TODO_MARKS,
+} from '@shared'
+import type {
+  Api001Request,
+  DeletionScope,
+  EntityType,
+  ErrorEnvelope,
+  Id,
+  MemberHint,
+  MessageDetail,
+  MonthRange,
+  SharedFilter,
+} from '@shared'
 
 import {
   loadConfig,
@@ -58,7 +84,7 @@ import {
   shellEnvelope,
   success,
 } from './http/respond'
-import { bodyBoolean, bodyEnum, bodyInt, bodyRecord, bodyString, invalidInput, queryFirst, queryInt } from './http/validate'
+import { bodyBoolean, bodyEnum, bodyInt, bodyRecord, bodyRequiredString, bodyString, invalidInput, queryEnum, queryFirst, queryInt, queryValues } from './http/validate'
 import { createShellLogger, type ShellLogLevel, type ShellLogger } from './log'
 
 /** 页面侧发出的启动令牌头名（`src/web/shell/api/token.ts` 的 `LAUNCH_TOKEN_HEADER`）。 */
@@ -80,10 +106,8 @@ export interface MaterialConsentResult {
 /**
  * `MOD-008` 的进程内入口（mod-004 §4.7 / `TASK-037` 的 `submitMaterialConsent` / `readArtifact`）。
  *
- * 现状（实测）：`src/server/regen/index.ts` 只再导出 constants / domain / errors / materials·manifest /
- * render·registry，**未导出** `materials/consent.ts` 的 `submitMaterialConsent` 与 `store/artifacts.ts` 的
- * `readArtifact`。按「模块外只经模块出口取用」的口径，外壳不深挖子目录、不代为实现 ⇒ 这两个入口默认未接线，
- * 对应路由给出明确的未接线失败（500 + 日志），并在模块发布后再此注入即闭环（见 `ShellAppOptions.ports`）。
+ * 接线：模块出口已发布 `submitMaterialConsent` / `readArtifact`（`src/server/regen/index.ts`），
+ * 缺省按 `createRegenPort(store)` 绑定即闭环；测试 / 替换实现经 `ShellAppOptions.ports.regen` 注入。
  */
 export interface RegenPort {
   /** 素材合规确认：`(store, items, now)` 绑定后的进程内入口。 */
@@ -97,8 +121,9 @@ export interface ShellPorts {
   store: Store
   ingest: IngestModule
   extract: ExtractModule
+  meme: MemeModule
   social: SocialProfileApi
-  /** 缺省未接线（模块出口未发布，见 `RegenPort`）。 */
+  /** 缺省绑定模块出口（见 `createRegenPort`）；测试可注入替身。 */
   regen?: RegenPort
 }
 
@@ -343,13 +368,15 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   const ingest =
     options.ports?.ingest ?? createIngestModule({ store, clock, logger, config: ingestConfigOf(config) })
   const extract = options.ports?.extract ?? createExtractModule({ store, clock, logger })
+  const meme = options.ports?.meme ?? createMemeModule({ store, clock, logger })
   const social = options.ports?.social ?? createSocialPort(store, logger)
   const ports: ShellPorts = {
     store,
     ingest,
     extract,
+    meme,
     social,
-    ...(options.ports?.regen === undefined ? {} : { regen: options.ports.regen }),
+    regen: options.ports?.regen ?? createRegenPort(store),
   }
 
   applyEngineConfig(config)
@@ -626,6 +653,310 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       applyEngineConfig(config)
       logger.info('settings.saved', { fields: Object.keys(patch) })
       res.json(success(metaOf(req), settingsViewOf(config)))
+    }),
+  )
+
+  // -------------------------------------------------------------------------
+  // 业务模块路由（mod-004 §4.1 路由表：`API-009` ~ `API-029` 的直通 / 写；读无令牌、写带令牌 + Host / Origin）
+  // -------------------------------------------------------------------------
+
+  // API-009 查询梗词云（直通）
+  app.get(
+    '/api/memes/cloud',
+    handle('memes:cloud', async (req, res) => {
+      const scope = 'memes:cloud'
+      const filter = filterOf(req, scope)
+      const layout = requiredQueryEnum(req, 'layout', CLOUD_LAYOUTS, scope)
+      const sizeBasis = queryEnum(req.query['sizeBasis'], 'sizeBasis', CLOUD_SIZE_BASES, scope)
+      res.json(success(metaOf(req), await meme.queryCloud({ filter, layout, sizeBasis })))
+    }),
+  )
+
+  // API-011 查询生命周期视图（直通；months 为 `YYYY-MM` 逗号列表）
+  app.get(
+    '/api/memes/lifecycle',
+    handle('memes:lifecycle', async (req, res) => {
+      const scope = 'memes:lifecycle'
+      const filter = filterOf(req, scope)
+      const months = monthRangeOf(req, scope)
+      res.json(success(metaOf(req), await meme.queryLifecycle({ filter, months })))
+    }),
+  )
+
+  // API-013 查询「我相关」梗（直通）
+  app.get(
+    '/api/memes/mine',
+    handle('memes:mine', async (req, res) => {
+      const scope = 'memes:mine'
+      const filter = filterOf(req, scope)
+      const view = requiredQueryEnum(req, 'view', MINE_VIEWS, scope)
+      res.json(success(metaOf(req), await meme.queryMine({ filter, view })))
+    }),
+  )
+
+  // API-010 查询梗单元（直通）
+  app.get(
+    '/api/memes/:memeId',
+    handle('memes:cell', async (req, res) => {
+      const scope = 'memes:cell'
+      const memeId = pathParam(req, 'memeId')
+      if (memeId.length === 0) throw invalidInput('缺少梗标识', scope, { field: 'memeId' })
+      const filter = filterOf(req, scope)
+      res.json(success(metaOf(req), await meme.queryCell({ memeId, filter })))
+    }),
+  )
+
+  // API-012 提交纠正改判（写；改判立即影响后续查询）
+  app.post(
+    '/api/memes/:memeId/correction',
+    ...writeGuard,
+    handle('memes:correction', async (req, res) => {
+      const scope = 'memes:correction'
+      const memeId = pathParam(req, 'memeId')
+      if (memeId.length === 0) throw invalidInput('缺少梗标识', scope, { field: 'memeId' })
+      const body = bodyRecordBody(req, scope)
+      const correction = bodyEnum(body, 'correction', CORRECTION_TYPES, scope)
+      if (correction === null) throw invalidInput('缺少必填字段 correction', scope, { field: 'correction' })
+      const mergeTargetId = bodyString(body, 'mergeTargetId', scope)
+      res.json(success(metaOf(req), await meme.applyCorrection({ memeId, correction, mergeTargetId })))
+    }),
+  )
+
+  // API-014 查询提取条目（直通；供消息时间轴 / 归档）
+  app.get(
+    '/api/extracts',
+    handle('extracts', async (req, res) => {
+      const scope = 'extracts'
+      const filter = filterOf(req, scope)
+      const page = pageRequestOf(req, scope)
+      res.json(success(metaOf(req), await extract.queryEntries({ filter, page })))
+    }),
+  )
+
+  // API-019 查询消息详情（直通；heading + 正文）
+  app.get(
+    '/api/extracts/:entryId',
+    handle('extracts:detail', async (req, res) => {
+      const scope = 'extracts:detail'
+      const entryId = pathParam(req, 'entryId')
+      if (entryId.length === 0) throw invalidInput('缺少条目标识', scope, { field: 'entryId' })
+      res.json(success(metaOf(req), await extract.queryMessageDetail({ entryId })))
+    }),
+  )
+
+  // API-016 修改主题 / 优先级（写；改后立即生效）
+  app.patch(
+    '/api/extracts/:entryId',
+    ...writeGuard,
+    handle('extracts:edit', async (req, res) => {
+      const scope = 'extracts:edit'
+      const entryId = pathParam(req, 'entryId')
+      if (entryId.length === 0) throw invalidInput('缺少条目标识', scope, { field: 'entryId' })
+      const body = bodyRecordBody(req, scope)
+      const topic = bodyString(body, 'topic', scope)
+      const priority = bodyEnum(body, 'priority', PRIORITIES, scope)
+      res.json(success(metaOf(req), await extract.updateEntryAttr({ entryId, topic, priority })))
+    }),
+  )
+
+  // API-017 标记待办状态（写；完成 / 忽略单向流转）
+  app.post(
+    '/api/extracts/:entryId/todo',
+    ...writeGuard,
+    handle('extracts:todo', async (req, res) => {
+      const scope = 'extracts:todo'
+      const entryId = pathParam(req, 'entryId')
+      if (entryId.length === 0) throw invalidInput('缺少条目标识', scope, { field: 'entryId' })
+      const body = bodyRecordBody(req, scope)
+      const todoStatus = bodyEnum(body, 'todoStatus', TODO_MARKS, scope)
+      if (todoStatus === null) throw invalidInput('缺少必填字段 todoStatus', scope, { field: 'todoStatus' })
+      res.json(success(metaOf(req), await extract.setTodoState({ entryId, todoStatus })))
+    }),
+  )
+
+  // API-015 查询通知总览（直通；四维度分组）
+  app.get(
+    '/api/notifications',
+    handle('notifications', async (req, res) => {
+      const scope = 'notifications'
+      const filter = filterOf(req, scope)
+      const dimension = requiredQueryEnum(req, 'dimension', NOTIFICATION_DIMENSIONS, scope)
+      const page = pageRequestOf(req, scope)
+      res.json(success(metaOf(req), await extract.queryNotifications({ filter, dimension, page })))
+    }),
+  )
+
+  // API-018 查询到期待办（直通；now 由页面给出，服务侧无调度）
+  app.get(
+    '/api/todos/due',
+    handle('todos:due', async (req, res) => {
+      const scope = 'todos:due'
+      const now = queryInt(req.query['now'], 'now', scope)
+      if (now === null) throw invalidInput('缺少必填参数 now', scope, { field: 'now' })
+      res.json(success(metaOf(req), await extract.queryDueTodos({ now })))
+    }),
+  )
+
+  // API-029 查询成员兴趣提示（直通；供消息详情内联提示）
+  app.get(
+    '/api/people/interest-hints',
+    handle('people:hints', async (req, res) => {
+      const scope = 'people:hints'
+      const memberIds = queryIdList(req, 'ids', scope)
+      res.json(success(metaOf(req), await social.getInterestHints({ memberIds })))
+    }),
+  )
+
+  // API-021 查询兴趣 → 人（直通；entry = 按一级维度 / 按二级标签）
+  app.get(
+    '/api/people',
+    handle('people:search', async (req, res) => {
+      const scope = 'people:search'
+      const entry = requiredQueryEnum(req, 'entry', PEOPLE_SEARCH_ENTRIES, scope)
+      const value = queryFirst(req.query['value'])
+      if (value === null) throw invalidInput('缺少必填参数 value', scope, { field: 'value' })
+      const filter = filterOf(req, scope)
+      res.json(success(metaOf(req), await social.searchPeople({ entry, value, filter })))
+    }),
+  )
+
+  // API-020 查询人物画像（直通）
+  app.get(
+    '/api/people/:memberId',
+    handle('people:profile', async (req, res) => {
+      const scope = 'people:profile'
+      const memberId = pathParam(req, 'memberId')
+      if (memberId.length === 0) throw invalidInput('缺少成员标识', scope, { field: 'memberId' })
+      const filter = filterOf(req, scope)
+      res.json(success(metaOf(req), await social.getProfile({ memberId, filter })))
+    }),
+  )
+
+  // API-022 查询两人配对（直通）
+  app.get(
+    '/api/pairs',
+    handle('pairs', async (req, res) => {
+      const scope = 'pairs'
+      const memberAId = queryFirst(req.query['memberAId'])
+      const memberBId = queryFirst(req.query['memberBId'])
+      if (memberAId === null || memberBId === null) {
+        throw invalidInput('缺少必填参数 memberAId / memberBId', scope, { fields: ['memberAId', 'memberBId'] })
+      }
+      res.json(success(metaOf(req), await social.getPair({ memberAId, memberBId })))
+    }),
+  )
+
+  // API-023 查询「我的社交契合度」（直通；「我」取 MOD-002 持有的 Me 标识）
+  app.get(
+    '/api/me/fit',
+    handle('me:fit', async (req, res) => {
+      res.json(success(metaOf(req), await social.getMyAffinity()))
+    }),
+  )
+
+  // API-024 生成组局建议（写；仅文字、不落库）
+  app.post(
+    '/api/playdate',
+    ...writeGuard,
+    handle('playdate', async (req, res) => {
+      const scope = 'playdate'
+      const body = bodyRecordBody(req, scope)
+      const interest = bodyRequiredString(body, 'interest', scope)
+      const candidateMemberIds = bodyIdList(body, 'candidateMemberIds', scope)
+      res.json(success(metaOf(req), await social.suggestGroupActivity({ interest, candidateMemberIds })))
+    }),
+  )
+
+  // API-025 查询身份对齐候选（直通）
+  app.get(
+    '/api/identity/candidates',
+    handle('identity:candidates', async (req, res) => {
+      res.json(success(metaOf(req), await social.listIdentityCandidates()))
+    }),
+  )
+
+  // API-026 提交身份对齐结论（写；未确认与否均不生效）
+  app.post(
+    '/api/identity/candidates/:candidateId',
+    ...writeGuard,
+    handle('identity:decision', async (req, res) => {
+      const scope = 'identity:decision'
+      const candidateId = pathParam(req, 'candidateId')
+      if (candidateId.length === 0) throw invalidInput('缺少候选标识', scope, { field: 'candidateId' })
+      const body = bodyRecordBody(req, scope)
+      const conclusion = bodyEnum(body, 'conclusion', IDENTITY_DECISIONS, scope)
+      if (conclusion === null) throw invalidInput('缺少必填字段 conclusion', scope, { field: 'conclusion' })
+      res.json(success(metaOf(req), await social.submitIdentityDecision({ candidateId, conclusion })))
+    }),
+  )
+
+  // API-027 确认与增删改性格标签（写；六维闭集）
+  app.post(
+    '/api/people/:memberId/persona',
+    ...writeGuard,
+    handle('people:persona', async (req, res) => {
+      const scope = 'people:persona'
+      const memberId = pathParam(req, 'memberId')
+      if (memberId.length === 0) throw invalidInput('缺少成员标识', scope, { field: 'memberId' })
+      const body = bodyRecordBody(req, scope)
+      const action = bodyEnum(body, 'action', PERSONALITY_TAG_ACTIONS, scope)
+      if (action === null) throw invalidInput('缺少必填字段 action', scope, { field: 'action' })
+      const dimension = bodyEnum(body, 'dimension', PERSONALITY_DIMENSIONS, scope)
+      res.json(success(metaOf(req), await social.editPersonalityTag({ memberId, action, dimension })))
+    }),
+  )
+
+  // API-028 增删改兴趣标签（写；即时生效）
+  app.patch(
+    '/api/people/:memberId/interests',
+    ...writeGuard,
+    handle('people:interests', async (req, res) => {
+      const scope = 'people:interests'
+      const memberId = pathParam(req, 'memberId')
+      if (memberId.length === 0) throw invalidInput('缺少成员标识', scope, { field: 'memberId' })
+      const body = bodyRecordBody(req, scope)
+      const action = bodyEnum(body, 'action', INTEREST_TAG_ACTIONS, scope)
+      if (action === null) throw invalidInput('缺少必填字段 action', scope, { field: 'action' })
+      const rawTag = body['tag']
+      let tag: { name: string; dimension: (typeof DIMENSIONS)[number] } | null = null
+      if (rawTag !== undefined && rawTag !== null) {
+        const record = bodyRecord(rawTag, scope)
+        const name = bodyRequiredString(record, 'name', scope)
+        const dimension = bodyEnum(record, 'dimension', DIMENSIONS, scope)
+        if (dimension === null) throw invalidInput('缺少必填字段 dimension', scope, { field: 'dimension' })
+        tag = { name, dimension }
+      }
+      res.json(success(metaOf(req), await social.editInterestTag({ memberId, action, tag })))
+    }),
+  )
+
+  // 群成员目录（非契约接口；页面把成员标识映射为昵称 —— 详情发送者 / 兴趣提示 / 梗王 / 身份对齐）
+  app.get(
+    '/api/members',
+    handle('members', (req, res) => {
+      const scope = 'members'
+      const ids = queryIdList(req, 'ids', scope)
+      const wanted = new Set(ids)
+      const result = store.read('DM-004', null, { page: 1, pageSize: 1000 })
+      res.json(success(metaOf(req), { members: result.records.filter((member) => wanted.has(member.memberId)) }))
+    }),
+  )
+
+  // 数据量（非契约接口；首屏与设置页展示）
+  app.get(
+    '/api/status/volume',
+    handle('status:volume', (req, res) => {
+      const countOf = (entityType: EntityType): number =>
+        store.read(entityType, null, { page: 1, pageSize: 1 }).pageInfo.total
+      res.json(
+        success(metaOf(req), {
+          messages: countOf('DM-003'),
+          groups: countOf('DM-002'),
+          people: countOf('DM-011'),
+          memes: countOf('DM-006'),
+          extracts: countOf('DM-010'),
+        }),
+      )
     }),
   )
 
@@ -908,6 +1239,14 @@ function createSocialPort(store: Store, logger: ShellLogger): SocialProfileApi {
   return createSocialProfileApi({ store, index, pipeline, logger })
 }
 
+/** 端口装配：MOD-008 的两个进程内入口绑定到存储门面（mod-008 §3.1 / §8 决策 1）。 */
+function createRegenPort(store: Store): RegenPort {
+  return {
+    submitMaterialConsent: (items, now) => submitMaterialConsent(store, items, now),
+    readArtifact: (ref) => readArtifact(store, ref),
+  }
+}
+
 /** 模块一配置灌入（详设 §7 的相关键；`sessionLimit` / `listLimit` 用模块内默认值）。 */
 function ingestConfigOf(config: ShellConfig): {
   cliCommandMs: number
@@ -972,6 +1311,74 @@ function pageRequestOf(req: Request, scope: string) {
   const page = queryInt(req.query['page'], 'page', scope)
   const pageSize = queryInt(req.query['pageSize'], 'pageSize', scope)
   return { page, pageSize }
+}
+
+/** 全局筛选查询参数（mod-004 §4.2 / `api-contract.md` §1.3：`groupIds` 重复参数、`from` / `to`、`keyword`、`identity`；空 = 不限）。 */
+function filterOf(req: Request, scope: string): SharedFilter | null {
+  const groupIds = [
+    ...new Set(
+      queryValues(req.query['groupIds'])
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ]
+  const from = queryInt(req.query['from'], 'from', scope)
+  const to = queryInt(req.query['to'], 'to', scope)
+  const keyword = queryFirst(req.query['keyword'])
+  const identity = queryFirst(req.query['identity'])
+  const filter: SharedFilter = {}
+  if (groupIds.length > 0) filter.groupIds = groupIds
+  if (from !== null && to !== null) {
+    filter.timeRange = from <= to ? { from, to } : { from: to, to: from }
+  } else if (from !== null || to !== null) {
+    throw invalidInput('时间范围需同时给出 from / to', scope, { field: 'timeRange' })
+  }
+  if (keyword !== null) filter.keyword = keyword
+  if (identity !== null) filter.identity = identity
+  return Object.keys(filter).length === 0 ? null : filter
+}
+
+/** 必填枚举查询参数（缺失 → `INVALID_INPUT`）。 */
+function requiredQueryEnum<T extends string>(req: Request, field: string, allowed: readonly T[], scope: string): T {
+  const value = queryEnum(req.query[field], field, allowed, scope)
+  if (value === null) throw invalidInput(`缺少必填参数 ${field}`, scope, { field })
+  return value
+}
+
+/** 月份列表查询参数（`YYYY-MM` 逗号分隔）→ 月份范围（取最小 / 最大）。 */
+function monthRangeOf(req: Request, scope: string): MonthRange {
+  const raw = queryFirst(req.query['months'])
+  if (raw === null) throw invalidInput('缺少必填参数 months', scope, { field: 'months' })
+  const months = [...new Set(raw.split(',').map((value) => value.trim()).filter((value) => value.length > 0))]
+  if (months.length === 0) throw invalidInput('参数 months 需为非空月份列表', scope, { field: 'months' })
+  for (const month of months) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      throw invalidInput('参数 months 需为 YYYY-MM 格式（逗号分隔）', scope, { field: 'months', value: month })
+    }
+  }
+  const sorted = [...months].sort()
+  return { from: sorted[0], to: sorted[sorted.length - 1] }
+}
+
+/** 逗号分隔的标识查询参数（非空；去重保序）。 */
+function queryIdList(req: Request, field: string, scope: string): Id[] {
+  const raw = queryFirst(req.query[field])
+  if (raw === null) throw invalidInput(`缺少必填参数 ${field}`, scope, { field })
+  const values = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+  if (values.length === 0) throw invalidInput(`参数 ${field} 需为非空标识列表`, scope, { field })
+  return [...new Set(values)]
+}
+
+/** 标识列表 JSON 体字段（非空字符串数组；去重保序）。 */
+function bodyIdList(body: Record<string, unknown>, field: string, scope: string): Id[] {
+  const raw = body[field]
+  if (!Array.isArray(raw)) throw invalidInput(`字段 ${field} 需为字符串数组`, scope, { field })
+  const values = raw.map((value) => (typeof value === 'string' ? value.trim() : '')).filter((value) => value.length > 0)
+  if (values.length === 0) throw invalidInput(`字段 ${field} 需为非空字符串数组`, scope, { field })
+  return [...new Set(values)]
 }
 
 /** 删除范围结构校验（闭集内 `INVALID_INPUT`；不做业务判断）。 */

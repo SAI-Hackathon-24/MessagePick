@@ -10,11 +10,9 @@
  * - `errors.ts`（§6）：统一错误信封构造与跨模块透传（不新增标识）。
  *
  * 设计声明但尚未落盘的入口（本文件不补实现，勿在其它文件私自补齐）：
- * `API-030` ~ `API-034` 绑定（`api/`）、用例编排（`app/`）、素材解析与合规
- * （`materials/resolver`、`materials/compliance`、`materials/consent`）、渲染管线
- * （`render/layout`、`render/compose`、`render/pipeline`、`render/render.worker`）、
- * 任务封装（`tasks/`）、存储适配（`store/`）、模板资源（`templates/`）与 `src/web/regen/**`；
- * 进程内编排入口 `submitMaterialConsent` / `readArtifact` 亦同。
+ * `API-030` ~ `API-034` 绑定（`api/`）、用例编排（`app/`）与 `src/web/regen/**`。
+ * 已由模块负责人落盘、供外壳（`MOD-004`）接线的进程内入口：素材合规（`materials/consent`）与
+ * 产物读取（`store/artifacts`）—— 下方导出，外壳按 `createRegenPort` 绑定。
  */
 
 export * from './constants'
@@ -23,3 +21,8 @@ export * from './domain/derive'
 export * from './errors'
 export * from './materials/manifest'
 export * from './render/registry'
+
+// 外壳接线的进程内入口（mod-004 §4.7；`store` 由调用方绑定）
+export { ensureUnconfirmedRecords, readConsentRecords, submitMaterialConsent } from './materials/consent'
+export type { ConsentResult } from './materials/consent'
+export { readArtifact, writeArtifact } from './store/artifacts'
