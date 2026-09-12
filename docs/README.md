@@ -295,8 +295,8 @@ stateDiagram-v2
 | `docs/README.md` | draft | 本文件，架构规则 |
 | `docs/raw/raw_design.md` | reviewed | 已由人写实：三模块总纲 + 模块一 v1.1 详规 + §2 全局约定 + §5 社交模块；CHG-013 已关闭全部待确认与 `TODO`，可供下游消费 |
 | `docs/product/prd.md` | reviewed | 阶段 1 已生成：15 条 `US-###` + 88 条 `REQ-###`（含负向条目）；提问已闭环，可供阶段 2 / 4 / 6 消费（CHG-014） |
-| `docs/design/modules.md` | reviewed | 阶段 2 已生成：8 个 `MOD-###`（MOD-000 保留给模板），含依赖图与禁用依赖方向；提问已闭环，可供阶段 3 / 4 / 5 / 6 / 7a 消费；CHG-016 已把阶段 3 的 4 条契约裁定回写接口声明 |
-| `docs/design/api-contract.md` | reviewed | 阶段 3 已生成：34 条 `API-###` + 14 个稳定错误标识；提问已闭环，可供阶段 5 / 6 消费（CHG-017） |
+| `docs/design/modules.md` | reviewed | 阶段 2 已生成：8 个 `MOD-###`（MOD-000 保留给模板），含依赖图与禁用依赖方向；提问已闭环，可供阶段 3 / 4 / 5 / 6 / 7a 消费；CHG-016 已把阶段 3 的 4 条契约裁定回写接口声明，CHG-024 补 §3 边说明表 |
+| `docs/design/api-contract.md` | reviewed | 阶段 3 已生成：34 条 `API-###` + 14 个稳定错误标识；提问已闭环，可供阶段 5 / 6 消费；CHG-024 为 `MOD-004` 补读路径（`API-004` 群清单、`API-002` 当前用户） |
 | `docs/design/data-model.md` | reviewed | 阶段 4 已生成：22 个 `DM-###`（MOD-003 / MOD-004 经裁定无落点）；提问已闭环，可供阶段 5 / 6 消费（CHG-018） |
 | `docs/plan/tasks.md` | reviewed | 阶段 5 已生成：38 个 `TASK-###`（7 个批次 + 关键路径）；覆盖全部 `MOD-###` / `API-###` / `DM-###`，可供阶段 6 消费（CHG-019） |
 | `docs/plan/acceptance-tests.md` | reviewed | 阶段 6 已生成：139 条 `AC-###`，覆盖 `REQ-001` ~ `REQ-088` 全部 88 条（CHG-020） |
@@ -313,9 +313,9 @@ stateDiagram-v2
 | `docs/CHANGELOG.md` | — | 变更记录（只追加），已含 CHG-001 – CHG-013 |
 | `docs/design/README.md` | draft | 设计分层导航（契约层 vs 实现层） |
 | `docs/design/impl/high-level-design.md` | reviewed | 阶段 7a 已生成：5 层架构、运行时视图、5 条关键流程（覆盖 US-001 ~ US-015）、8 项横切关注点、9 条技术决策（上游影响均为「无」）；可供 7b 与模块负责人消费（CHG-021） |
-| `docs/design/impl/detailed-design.md` | reviewed | 阶段 7b 已生成：HLD §5 的 8 项横切关注点全部展开 + 9 条实现级决策（上游影响均为「无」）（CHG-022） |
+| `docs/design/impl/detailed-design.md` | reviewed | 阶段 7b 已生成：HLD §5 的 8 项横切关注点全部展开 + 9 条实现级决策（上游影响均为「无」）；CHG-024 收敛队列可见性口径 |
 | `docs/design/impl/mod-000-template.md` | draft | 模块设计模板（`MOD-000` 保留，不分配） |
-| `docs/design/impl/mod-001-data-ingest.md` ~ `mod-008-regeneration.md` | draft | 8 份模块设计骨架已建（对应 `MOD-001` ~ `MOD-008`），正文待各模块负责人按 §3 上游影响规则撰写（CHG-023） |
+| `docs/design/impl/mod-001-data-ingest.md` ~ `mod-008-regeneration.md` | reviewed | 8 份模块设计已写实（CHG-023 建骨架、CHG-025 首撰正文）；各模块代码目录与内部结构已定，关键决策的上游影响全部为「无」 |
 | `docs/status/implementation.md` | — | 模块实现看板（不参与状态机） |
 | `.github/skills/design-doc-change/SKILL.md` | reviewed | 设计变更回流流程（状态机 + 8 步 + 自检 + 上游影响规则），可自动加载 |
 | `.github/skills/design-doc-change/scripts/check-traceability.py` | reviewed | 追溯链自检脚本，当前 0 error / 0 warning |
