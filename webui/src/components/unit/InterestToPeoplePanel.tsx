@@ -84,6 +84,12 @@ export function InterestToPeoplePanel() {
 
       {result.error && <ErrorState error={result.error} onRetry={result.refetch} onClearFilter={clearFilter} />}
 
+      {result.data && (
+        <p className="mp-meta">
+          共 {result.data.people.length} 人 · 排序按该兴趣上的置信度；卡片里的「回复时长」用来判断找他要等多久（REQ-065）。
+        </p>
+      )}
+
       {result.loading && !result.data ? (
         <LoadingState label="正在检索…" rows={3} />
       ) : !result.data?.people.length ? (
@@ -143,11 +149,12 @@ export function InterestToPeoplePanel() {
                     </div>
                     {p.evidence.length > 0 && (
                       <ul className="mt-2 space-y-1 border-t border-ink-900/[0.05] pt-2">
-                        {p.evidence.slice(0, 2).map((e) => (
+                        {p.evidence.slice(0, 1).map((e) => (
                           <li key={e.messageId} className="mp-meta truncate">
                             {e.senderName}：{e.excerpt}
                           </li>
                         ))}
+                        {p.evidence.length > 1 && <li className="mp-meta">另有 {p.evidence.length - 1} 条证据（打开画像查看）</li>}
                       </ul>
                     )}
                   </Card>

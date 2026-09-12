@@ -15,6 +15,7 @@
  * → 兴趣标签 → 画像 → 配对 → 生成历史。
  */
 import type {
+  ActivityBreakdown,
   DataSource,
   ExtractItem,
   ExtractType,
@@ -55,10 +56,10 @@ const pickN = <T,>(arr: readonly T[], n: number): T[] => {
 };
 const int = (min: number, max: number) => min + Math.floor(rng() * (max - min + 1));
 
-/** 数据时间基准：2026-03-01 ~ 2026-06-30（与「记录更新至 X」一致） */
+/** 数据时间基准：2026-03-01 ~ 2026-08-31（约半年，使活跃新鲜度等指标具备区分度） */
 export const DATA_START = new Date('2026-03-01T00:00:00+08:00');
-export const DATA_END = new Date('2026-06-30T23:59:00+08:00');
-export const UPDATED_TO = '2026-06-30T22:15:00+08:00';
+export const DATA_END = new Date('2026-08-31T23:59:00+08:00');
+export const UPDATED_TO = '2026-08-31T22:15:00+08:00';
 /** 采集到的消息总条数（用于「数据量」展示与删除预检计数） */
 export const TOTAL_CAPTURED_MESSAGES = 3184;
 /** 通讯录 / 好友列表条目数 */
@@ -102,14 +103,23 @@ export const ME_NAME = '陈禹哲';
 export const MEMBERS: MemberIdentity[] = [];
 export const PERSON_NAMES: Record<string, string> = {};
 {
+  /**
+   * personId 必须**唯一**：姓名可以重名（名字池在不同群之间是复用的），
+   * 但「人」是跨群合并单位，重名会让下游把两个不同的人当成同一个人 —— 例如
+   * ECharts 人-人图谱会因 `Graph nodes have duplicate name or id` 直接抛异常、
+   * 画布空白。因此用「人序号 + 姓名」构成唯一且稳定的标识，显示名仍取姓名。
+   * 真实的跨群合并由人工确认的映射表（DM-012 / REQ-082）决定，不靠姓名相同。
+   */
   let seq = 0;
+  let personSeq = 0;
   Object.entries(MEMBERS_PER_GROUP).forEach(([groupId, names]) => {
     names.forEach((name) => {
       seq += 1;
-      const memberId = `m${seq}`;
-      const personId = `p_${name}`;
+      // 同一人出现在多个群时复用同一个 personId（这里按姓名去重，模拟已确认的映射）
+      const existing = Object.entries(PERSON_NAMES).find(([, n]) => n === name);
+      const personId = existing ? existing[0] : `p${(personSeq += 1)}_${name}`;
       MEMBERS.push({
-        id: memberId,
+        id: `m${seq}`,
         groupId,
         displayName: name,
         isMe: name === ME_NAME && groupId === 'g1',
@@ -121,7 +131,38 @@ export const PERSON_NAMES: Record<string, string> = {};
 }
 /** 人的标识列表（跨群合并单位） */
 export const PERSON_IDS = Object.keys(PERSON_NAMES);
-export const ME_PERSON_ID = `p_${ME_NAME}`;
+export const ME_PERSON_ID = Object.keys(PERSON_NAMES).find((p) => PERSON_NAMES[p] === ME_NAME) ?? PERSON_IDS[0];
+
+/**
+ * 开发期自检：确认 personId 唯一、且姓名到 personId 是一对一。
+ * 重名冲突是人-人图谱崩溃的直接原因，这里把它变成可检测的断言。
+ */
+export function validatePersons(): { ok: boolean; problems: string[] } {
+  const problems: string[] = [];
+  // 同一人出现在多个群 → 多行成员身份共用同一个 personId，这是**预期**的（跨群合并单位）。
+  // 真正要防的是：同一个 personId 被赋予**不同姓名**（下一个人被合并进上一个人）。
+  const namesOf = new Map<string, Set<string>>();
+  MEMBERS.forEach((m) => {
+    if (!namesOf.has(m.personId)) namesOf.set(m.personId, new Set());
+    namesOf.get(m.personId)!.add(m.displayName);
+  });
+  namesOf.forEach((set, pid) => {
+    if (set.size > 1) problems.push(`personId「${pid}」被多个姓名共用：${[...set].join(' / ')}`);
+  });
+  // 姓名 → 人的映射必须唯一，否则图谱会出现同名节点（ECharts 会直接报错）
+  const personsOf = new Map<string, Set<string>>();
+  MEMBERS.forEach((m) => {
+    if (!personsOf.has(m.displayName)) personsOf.set(m.displayName, new Set());
+    personsOf.get(m.displayName)!.add(m.personId);
+  });
+  personsOf.forEach((set, name) => {
+    if (set.size > 1) problems.push(`姓名「${name}」映射到 ${set.size} 个不同的人（会造成图谱节点重复）`);
+  });
+  // 图谱用的是「人」这一层，节点标识必须唯一
+  const nodes = [...namesOf.keys()];
+  if (new Set(nodes).size !== nodes.length) problems.push('人-人图谱的节点标识存在重复');
+  return { ok: problems.length === 0, problems };
+}
 
 export const memberById = (id: string) => MEMBERS.find((m) => m.id === id);
 
@@ -391,30 +432,71 @@ export const EXTRACTS: ExtractItem[] = EXTRACT_SEEDS.map((seed, idx) => {
 /* -------------------------------------------------------------------------- */
 /* DM-013 兴趣标签 + DM-014 人物兴趣标签（模块三）                                */
 /* -------------------------------------------------------------------------- */
+/**
+ * 二级标签池。
+ * =============================================================================
+ * 一级五类固定（REQ-052），二级自由；下面每个标签都必须归属正确的一级维度。
+ * 分类规则（与提出者确认后的口径一致）：
+ *   运动：球类、健身、跑步等身体活动
+ *   艺术：绘画、摄影、音乐、写作、设计等创作与审美
+ *   游戏：**具体游戏作品**（端游 / 手游 / 桌游）
+ *   娱乐：影视、动漫、棋牌、智力爱好（算法竞赛 / 刷题 / 大模型应用等）与吃喝玩乐
+ *   社交：与人相处的方式（搭子、组局、群内互动）
+ *
+ * ⚠️ 算法竞赛 / 编程 / 刷题类**归「娱乐」下的智力爱好**，不得归入「游戏」（提出者裁定）。
+ */
 const TAG_POOL: { name: string; category: InterestCategory }[] = [
+  // 运动
   { name: '羽毛球', category: 'sports' },
   { name: '长跑', category: 'sports' },
   { name: '乒乓球', category: 'sports' },
   { name: '健身', category: 'sports' },
+  // 艺术
   { name: '摄影', category: 'art' },
   { name: '手绘', category: 'art' },
   { name: '吉他', category: 'art' },
   { name: '黑胶唱片', category: 'art' },
-  { name: '算法竞赛', category: 'game' },
+  { name: '前端动效', category: 'art' },
+  // 游戏：只放具体游戏作品
   { name: '独立游戏', category: 'game' },
   { name: '桌游', category: 'game' },
   { name: '端游《无畏契约》', category: 'game' },
+  // 娱乐：影视动漫、棋牌、智力爱好、吃喝玩乐
+  { name: '算法竞赛', category: 'entertainment' },
+  { name: '大模型应用', category: 'entertainment' },
   { name: '表情包制作', category: 'entertainment' },
   { name: '科幻小说', category: 'entertainment' },
   { name: '电影', category: 'entertainment' },
   { name: '美食探店', category: 'entertainment' },
+  // 社交：与人相处的方式
   { name: '夜宵搭子', category: 'social' },
   { name: '组局张罗', category: 'social' },
   { name: '群聊活跃', category: 'social' },
   { name: '技术分享', category: 'social' },
-  { name: '大模型应用', category: 'entertainment' },
-  { name: '前端动效', category: 'art' },
 ];
+
+/**
+ * 开发期自检：确认每个二级标签的一级归属合法，且池中没有走错维度的标签。
+ * 只在 mock 模式（开发期）下运行，用于替代「人工抽查 20 个标签」这一步。
+ */
+export function validateTagCategories(): { ok: boolean; problems: string[] } {
+  const problems: string[] = [];
+  const allowed: InterestCategory[] = ['sports', 'art', 'game', 'entertainment', 'social'];
+  TAGS.forEach((t) => {
+    if (!allowed.includes(t.category)) problems.push(`标签「${t.name}」的一级维度非法：${t.category}`);
+  });
+  // 游戏维度只允许具体游戏作品
+  const gameAllow = /游戏|桌游|手游|端游|《.+》/;
+  TAGS.filter((t) => t.category === 'game' && !gameAllow.test(t.name)).forEach((t) =>
+    problems.push(`「${t.name}」归入「游戏」但看起来不是具体游戏作品`),
+  );
+  // 智力爱好类不得出现在游戏维度
+  const intellectual = /算法|编程|刷题|竞赛|大模型|技术/;
+  TAGS.filter((t) => t.category === 'game' && intellectual.test(t.name)).forEach((t) =>
+    problems.push(`「${t.name}」属智力爱好，应归「娱乐」而非「游戏」`),
+  );
+  return { ok: problems.length === 0, problems };
+}
 
 /** 同义归并组示例（REQ-055）：羽毛球 / 打羽球 / 约球 → 羽毛球 */
 const MERGED_ALIASES: Record<string, string[]> = {
@@ -455,7 +537,36 @@ export const PERSON_TAGS: Record<string, string[]> = Object.fromEntries(
   }),
 );
 /** 发言不足的成员 → 未知，不做推测（REQ-081） */
-const UNKNOWN_PERSON_IDS = new Set(PERSON_IDS.filter((_, i) => i % 11 === 5));
+/**
+ * 「未知」成员（发言不足、不足以推断兴趣 —— REQ-081）。
+ * ⚠️ 判定必须**按 personId 稳定派生**，不能用数组下标取模：
+ * 下标会随人员列表的构成变化而漂移，曾因此让「未知」名单与已知人员重叠，
+ * 导致人-人图谱出现重复节点、ECharts 直接抛异常。
+ * 这里改为按 personId 的稳定散列挑选，并与兴趣标签数量交叉校验。
+ */
+const isUnknownByHash = (personId: string) => {
+  let h = 0;
+  for (let i = 0; i < personId.length; i += 1) h = (h * 31 + personId.charCodeAt(i)) >>> 0;
+  return h % 7 === 3;
+};
+const UNKNOWN_PERSON_IDS = new Set(PERSON_IDS.filter((p) => isUnknownByHash(p)));
+
+/**
+ * 自检：「未知」只是一个**标记**，未知名单必须是人员列表的子集。
+ * 未知名单与已知人员一旦重叠，人-人图谱就会出现重复节点 → ECharts 抛异常、画布空白。
+ */
+export function validateUnknown(): { ok: boolean; problems: string[]; unknown: string[] } {
+  const problems: string[] = [];
+  const unknown = [...UNKNOWN_PERSON_IDS];
+  if (new Set(unknown).size !== unknown.length) problems.push('未知名单自身有重复');
+  unknown.forEach((p) => {
+    if (!PERSON_IDS.includes(p)) problems.push(`未知名单里的「${p}」不在人员列表中`);
+  });
+  const known = new Set(PERSON_IDS.filter((p) => !UNKNOWN_PERSON_IDS.has(p)));
+  const overlap = unknown.filter((p) => known.has(p));
+  if (overlap.length) problems.push(`未知名单与已知人员重叠：${overlap.map((p) => PERSON_NAMES[p]).join('、')}`);
+  return { ok: problems.length === 0, problems, unknown };
+}
 
 export const tagById = (id: string) => TAGS.find((t) => t.tagId === id);
 
@@ -493,6 +604,21 @@ const replyMedianOf = (personId: string): number | undefined => {
   gaps.sort((a, b) => a - b);
   return Math.max(1, gaps[Math.floor(gaps.length / 2)]);
 };
+
+/** 每人最近一次发言时间（活跃新鲜度 = 距该时间的自然日跨度） */
+export const lastSeenCache: Record<string, string | undefined> = Object.fromEntries(
+  PERSON_IDS.map((pid) => {
+    const mine = new Set(MEMBERS.filter((m) => m.personId === pid).map((m) => m.id));
+    const last = [...MESSAGES].reverse().find((m) => mine.has(m.senderId));
+    return [pid, last?.sentAt];
+  }),
+);
+
+/** 群内消息条数最大值（活跃度归一化基准之一，供界面说明口径） */
+export const MAX_PERSON_MESSAGES = Math.max(...PERSON_IDS.map((p) => activityOf(p)), 1);
+
+/** 活跃度综合分的口径常量（消息条数低于此值视为样本不足，不做推测） */
+export const ACTIVITY_MIN_MESSAGES = 10;
 
 export const activityCache: Record<string, number> = Object.fromEntries(PERSON_IDS.map((p) => [p, activityOf(p)]));
 export const replyCache: Record<string, number | undefined> = Object.fromEntries(PERSON_IDS.map((p) => [p, replyMedianOf(p)]));
@@ -566,6 +692,55 @@ export const interestHintsOf = (memberIds: string[]): MemberInterestHint[] =>
     };
   });
 
+/**
+ * 活跃度综合分（**展示用派生值**；不替换 DM-011 的「活跃度 = 发言量」）
+ * 口径：消息条数 50% + 平均回复时长 30% + 活跃新鲜度 20%，
+ *       每项除以群内最大值归一化到 0–100 后加权求和。
+ */
+export function activityBreakdownOf(personId: string): ActivityBreakdown {
+  const messages = activityCache[personId] ?? 0;
+  if (messages < ACTIVITY_MIN_MESSAGES) return { score: 0, insufficient: true, metrics: [] };
+
+  const maxMessages = Math.max(...PERSON_IDS.map((p) => activityCache[p] ?? 0), 1);
+  const replyValues = PERSON_IDS.map((p) => replyCache[p]).filter((v): v is number => v !== undefined);
+  const maxReply = Math.max(...replyValues, 1);
+  const stalenessOf = (p: string) => {
+    const iso = lastSeenCache[p];
+    return iso ? Math.max(0, Math.round((DATA_END.getTime() - Date.parse(iso)) / 86400000)) : 0;
+  };
+  const maxStaleness = Math.max(...PERSON_IDS.map(stalenessOf), 1);
+
+  const reply = replyCache[personId];
+  const staleness = stalenessOf(personId);
+  const base = [
+    { key: 'messages' as const, label: '消息条数', raw: messages, weight: 0.5, normalized: Math.round((messages / maxMessages) * 100), groupMax: maxMessages },
+    {
+      key: 'reply' as const,
+      label: '平均回复时长（中位数 / 分钟）',
+      raw: reply ?? 0,
+      weight: 0.3,
+      normalized: reply === undefined ? null : Math.round((1 - reply / maxReply) * 100),
+      groupMax: maxReply,
+      note: reply === undefined ? '未被 @ 或接话，无样本；该维度权重已按比例摊到其余维度' : undefined,
+    },
+    {
+      key: 'freshness' as const,
+      label: '活跃新鲜度（距最近一次发言 / 天）',
+      raw: staleness,
+      weight: 0.2,
+      normalized: Math.round((1 - staleness / maxStaleness) * 100),
+      groupMax: maxStaleness,
+    },
+  ];
+  const usableWeight = base.filter((m) => m.normalized !== null).reduce((sum, m) => sum + m.weight, 0) || 1;
+  const metrics = base.map((m) => ({ ...m, effectiveWeight: m.normalized === null ? 0 : Number((m.weight / usableWeight).toFixed(3)) }));
+  return {
+    score: Math.round(metrics.reduce((sum, m) => sum + (m.normalized ?? 0) * m.effectiveWeight, 0)),
+    insufficient: false,
+    metrics,
+  };
+}
+
 /** 供 mock 复用：某人的画像（API-020） */
 export function buildProfile(personId: string): PersonProfile {
   const unknown = UNKNOWN_PERSON_IDS.has(personId);
@@ -587,6 +762,7 @@ export function buildProfile(personId: string): PersonProfile {
     personalCloud: tags.map((t) => ({ name: t.name, confidence: t.confidence, category: t.category })),
     personality: (PERSONA[personId] ?? []).filter((p) => p.status === 'confirmed'),
     activity: activityCache[personId] ?? 0,
+    activityScore: activityBreakdownOf(personId),
     replyMedianMinutes: replyCache[personId],
     groups,
   };

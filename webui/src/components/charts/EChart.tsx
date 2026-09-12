@@ -56,6 +56,8 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
   const chartRef = useRef<{ setOption: (o: unknown, notMerge?: boolean) => void; resize: () => void; dispose: () => void; on: (e: string, h: (p: unknown) => void) => void; off: (e: string) => void } | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  /** 实例与 observer 的清理函数（不挂在 DOM 上，避免污染元素类型） */
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   /* 懒加载 ECharts + 注册所需模块 */
   useEffect(() => {
@@ -74,29 +76,67 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
     };
   }, [prepare]);
 
+  const optionRef = useRef(option);
+  optionRef.current = option;
+
   useEffect(() => {
     if (!ready || !ref.current) return;
     let disposed = false;
+    let raf = 0;
+
     (async () => {
       const echarts = await loadECharts();
       if (disposed || !ref.current) return;
-      const chart = echarts.init(ref.current);
-      chartRef.current = chart as unknown as typeof chartRef.current;
-      chart.setOption(option, true);
-      const ro = new ResizeObserver(() => chart.resize());
-      ro.observe(ref.current);
-      const cleanup = () => {
+      const el = ref.current;
+
+      /**
+       * ⚠️ 必须在容器**已有非零尺寸**之后再 init + setOption。
+       * ECharts 在尺寸为 0 时初始化会把 canvas 定成 0×0：
+       * 普通直角坐标系图表会在后续 resize 时恢复，但**力导向图（人-人关系图谱）
+       * 会因为布局阶段拿到 0×0 而直接不渲染**，表现为「有统计数字、画布空白」。
+       * 懒加载 chunk 落地、父容器尚未布局、折叠面板刚展开等都会触发这种情况。
+       */
+      const hasSize = () => el.clientWidth > 0 && el.clientHeight > 0;
+
+      const boot = () => {
+        if (disposed || chartRef.current) return;
+        if (!hasSize()) return; // 等 ResizeObserver 报出尺寸后再初始化
+        try {
+          const chart = echarts.init(el);
+          chartRef.current = chart as unknown as typeof chartRef.current;
+          chart.setOption(optionRef.current, true);
+        } catch (e) {
+          // 不吞异常：配置有问题时要能从控制台看到原因（此前静默失败会表现为「画布空白」）
+          console.error('[EChart] 图表配置渲染失败：', e);
+          setFailed(true);
+          return;
+        }
+        // 再等一帧 resize 一次：字体 / 滚动条 / 折叠动画可能改变可用宽高
+        raf = requestAnimationFrame(() => {
+          if (!disposed) chartRef.current?.resize();
+        });
+      };
+
+      boot();
+
+      const ro = new ResizeObserver(() => {
+        if (chartRef.current) chartRef.current.resize();
+        else boot(); // 首次拿到尺寸时初始化
+      });
+      ro.observe(el);
+
+      cleanupRef.current = () => {
+        cancelAnimationFrame(raf);
         ro.disconnect();
-        chart.dispose();
+        chartRef.current?.dispose();
         chartRef.current = null;
       };
-      /* 组件卸载时清理 */
-      (ref.current as unknown as { __cleanup?: () => void }).__cleanup = cleanup;
     })();
+
     return () => {
       disposed = true;
-      const el = ref.current as unknown as { __cleanup?: () => void } | null;
-      el?.__cleanup?.();
+      cleanupRef.current?.();
+      cleanupRef.current = null;
     };
     // option 变化只更新配置，不重建实例（见下一个 effect）
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,6 +149,7 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !onEvents) return;
+    // ready 变化会重新执行本 effect：若初始化被推迟到拿到尺寸之后，事件仍能绑上
     Object.entries(onEvents).forEach(([evt, handler]) => chart.on(evt, handler));
     return () => {
       Object.keys(onEvents).forEach((evt) => chart.off(evt));

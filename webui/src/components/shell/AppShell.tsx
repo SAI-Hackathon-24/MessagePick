@@ -8,29 +8,35 @@
  *   · 四类异常的统一呈现（REQ-016、AC-035）
  *   · 设置页：数据去向说明（REQ-012）与删除流程入口（REQ-011）
  */
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { BarChart3, Clock3, HeartHandshake, Info, LayoutDashboard, MessageSquareText, RefreshCw, Settings, Sparkles, UploadCloud } from 'lucide-react';
+import { useState } from 'react';
+import { Link, Outlet, useLocation } from 'react-router-dom';
+import { BarChart3, Clock3, Info, RefreshCw, Settings, UploadCloud } from 'lucide-react';
 import { useAppState } from '@/state/appState';
 import { cn } from '@/lib/cn';
 import { fmtMD } from '@/lib/format';
 import { apiMode } from '@/api';
-import { MODULE_LABEL } from '@/types';
 import { GlobalFilterBar } from './GlobalFilterBar';
+import { NAV_GROUPS, SidebarNav } from './SidebarNav';
 import { Badge, NoticeBar } from '@/components/ui';
 import { FirstRunGuide } from './FirstRunGuide';
 import { SettingsDialog } from './SettingsDialog';
 
-const NAV = [
-  { to: '/', label: '总览', icon: LayoutDashboard, module: null },
-  { to: '/meme', label: '群聊梗分析', icon: Sparkles, module: 'meme' as const },
-  { to: '/extract', label: '群聊信息提取', icon: MessageSquareText, module: 'extract' as const },
-  { to: '/social', label: '正向 / 反向社交', icon: HeartHandshake, module: 'social' as const },
-] as const;
+/** 当前页标题：由路由反查（子项优先，其次一级入口） */
+function pageTitle(pathname: string): string {
+  for (const g of NAV_GROUPS) {
+    if (pathname.startsWith(`/${g.key}`)) {
+      const child = g.children.find((c) => c.to === pathname);
+      return child ? `${g.label} · ${child.label}` : g.label;
+    }
+  }
+  return '总览';
+}
 
 export function AppShell() {
   const { status, statusLoading, triggerUpdate, updating, updateNotice, dismissUpdateNotice, setSettingsOpen, groups } = useAppState();
   const loc = useLocation();
-  const path = '/' + (loc.pathname.split('/')[1] ?? '');
+  const [collapsed, setCollapsed] = useState(false);
+  const title = pageTitle(loc.pathname);
 
   /* REQ-003：未采集到任何数据 → 首屏引导 */
   if (!statusLoading && status && !status.hasData) {
@@ -42,30 +48,10 @@ export function AppShell() {
       {/* ---------------- 顶栏：更新入口 + 记录更新至 X（REQ-002，始终可见） ---------------- */}
       <header className="mp-sticky-head border-b border-ink-900/[0.07] bg-white/75 backdrop-blur-md">
         <div className="flex flex-wrap items-center gap-2.5 px-4 py-2.5 md:px-6">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-jade-500 to-jade-700 text-white shadow-glow">
-              <Sparkles size={16} />
-            </span>
-            <div className="leading-tight">
-              <div className="text-[14px] font-semibold tracking-wide text-ink-800">聊斋 MessagePick</div>
-              <div className="mp-meta">{MODULE_LABEL[(NAV.find((n) => n.to === path)?.module ?? 'meme') as 'meme']}</div>
-            </div>
-          </div>
-
-          <div className="mx-auto hidden items-center gap-1 rounded-xl bg-ink-900/[0.04] p-1 lg:flex">
-            {NAV.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                className={({ isActive }) =>
-                  cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors', isActive ? 'bg-white text-jade-700 shadow-sm' : 'text-ink-500 hover:text-ink-700')
-                }
-              >
-                <n.icon size={13} />
-                {n.label}
-              </NavLink>
-            ))}
-          </div>
+          {/* 顶部只保留当前页面标题；一级/子级导航全在左侧栏 */}
+          <h1 data-testid="page-title" className="text-[15px] font-semibold tracking-wide text-ink-800">
+            {title}
+          </h1>
 
           <div className="ml-auto flex items-center gap-2">
             {/* 「记录更新至 X」：始终可见（REQ-002） */}
@@ -101,7 +87,9 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-5 md:px-6">
+      <div className="flex min-h-0 flex-1">
+        <SidebarNav collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
+        <main className="min-w-0 flex-1 px-4 py-5 md:px-6">
         {updateNotice && (
           <NoticeBar tone="sky" className="mb-4 flex items-start justify-between gap-3">
             <span className="flex items-start gap-2">
@@ -123,20 +111,20 @@ export function AppShell() {
           </NoticeBar>
         )}
 
-        <Outlet />
-      </main>
+          <div className="mx-auto max-w-[1280px]">
+            <Outlet />
+          </div>
+        </main>
+      </div>
 
       {/* ---------------- 移动端底部导航 ---------------- */}
+      {/* 窄屏：三个一级入口的底部导航（子项在页面内切换，避免小屏塞入过多入口） */}
       <nav className="flex items-center justify-around border-t border-ink-900/[0.07] bg-white/85 py-1.5 backdrop-blur lg:hidden">
-        {NAV.map((n) => (
-          <NavLink
-            key={n.to}
-            to={n.to}
-            className={({ isActive }) => cn('flex flex-col items-center gap-0.5 rounded-lg px-3 py-1 text-[10px]', isActive ? 'text-jade-700' : 'text-ink-400')}
-          >
-            <n.icon size={17} />
-            {n.label}
-          </NavLink>
+        {NAV_GROUPS.map((g) => (
+          <Link key={g.key} to={g.to} className={cn('flex flex-col items-center gap-0.5 rounded-lg px-3 py-1 text-[10px]', loc.pathname.startsWith(`/${g.key}`) ? 'text-jade-700' : 'text-ink-400')}>
+            <g.icon size={17} />
+            {g.label}
+          </Link>
         ))}
       </nav>
 

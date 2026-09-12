@@ -11,6 +11,7 @@
  *     正文 = AI 总结 + 所有来源群消息；并内联给出成员兴趣提示（REQ-070）
  */
 import { useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { AlarmClock, Check, CheckCheck, Clock, EyeOff, ListFilter, MessageSquareText, Pencil, Sparkles } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
@@ -34,6 +35,9 @@ const TODO_TONE = { pending: 'sky', done: 'jade', ignored: 'neutral' } as const;
 
 export default function ExtractPage() {
   const { filter, clearFilter } = useAppState();
+  const { view } = useParams();
+  /** 子项：timeline（消息时间轴）/ notices（通知总览）/ todo（待办与 DDL） */
+  const pageView: 'timeline' | 'notices' | 'todo' = view === 'notices' ? 'notices' : view === 'todo' ? 'todo' : 'timeline';
   const [dimension, setDimension] = useState<NoticeDimension>('todo');
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -86,12 +90,14 @@ export default function ExtractPage() {
 
   return (
     <div className="space-y-5">
+      {pageView !== 'todo' && (
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="提取条目" value={num(timeline.data?.total ?? 0)} unit="条" hint="按时间排序供消息时间轴使用" icon={MessageSquareText} />
         <Stat label="待处理" value={stats.pending} unit="条" hint="未处理状态；支持完成 / 忽略" icon={CheckCheck} tone="amber" />
         <Stat label="优先级高" value={stats.high} unit="条" hint="优先级由 AI 判定、用户可改" icon={ListFilter} tone="coral" />
         <Stat label="带 DDL" value={stats.withDdl} unit="条" hint="到期前 1 天在应用内提醒" icon={AlarmClock} tone="ink" />
       </section>
+      )}
 
       {/* 到期待办提示（REQ-046：仅在使用应用期间检查，无后台常驻） */}
       {(due.data ?? []).length > 0 && (
@@ -107,7 +113,8 @@ export default function ExtractPage() {
         </NoticeBar>
       )}
 
-      {/* 视图与维度切换：这些都是模块二的视图状态，不是第二套筛选控件（REQ-049） */}
+      {/* 通知总览的浏览维度：模块二的视图状态，不是第二套筛选控件（REQ-049） */}
+      {pageView === 'notices' && (
       <Card className="flex flex-wrap items-center gap-2 px-3.5 py-2.5">
         <span className="mp-meta">通知总览浏览维度</span>
         {(Object.keys(NOTICE_DIMENSION_LABEL) as NoticeDimension[]).map((d) => (
@@ -116,12 +123,55 @@ export default function ExtractPage() {
           </Chip>
         ))}
         <span className="ml-auto mp-meta inline-flex items-center gap-1">
-          <Clock size={11} /> 消息时间轴：AI 按时间排序，群多选取自全局筛选条
+          <Clock size={11} /> 群多选取自全局筛选条
         </span>
       </Card>
+      )}
 
       {timeline.error && <ErrorState error={timeline.error} onRetry={timeline.refetch} onClearFilter={clearFilter} />}
 
+      {/* ---------------- 待办与 DDL（REQ-046）：只列未处理项，按 DDL 升序 ---------------- */}
+      {pageView === 'todo' && (
+        <Card>
+          <CardHeader title="待办与 DDL" icon={AlarmClock} subtitle="只显示未处理的条目，按 DDL 升序；完成或忽略后会从这里移除" />
+          <ul className="divide-y divide-ink-900/[0.05] px-1.5 py-1.5">
+            {items
+              .filter((it) => it.todoState === 'pending')
+              .sort((a, b) => (a.elements.deadline ?? '9999').localeCompare(b.elements.deadline ?? '9999'))
+              .map((it) => {
+                const dl = deadlineHint(it.elements.deadline);
+                return (
+                  <li key={it.id} className="flex flex-wrap items-center gap-2 px-2.5 py-2.5">
+                    <button type="button" onClick={() => setDetailId(it.id)} className="min-w-0 flex-1 text-left">
+                      <span className="block truncate text-[13px] font-medium text-ink-700">{it.summaryLine}</span>
+                      <span className="mp-meta">
+                        {it.groupName} · {fmtMD(it.sentAt)}
+                        {it.elements.deadline ? ` · DDL ${fmtMD(it.elements.deadline)}` : ' · 无 DDL'}
+                      </span>
+                    </button>
+                    {dl && <Badge tone={dl.overdue ? 'neutral' : dl.urgent ? 'coral' : 'jade'}>{dl.text}</Badge>}
+                    <Badge tone={PRIORITY_TONE[it.priority]}>优先级 {PRIORITY_LABEL[it.priority]}</Badge>
+                    <Button size="sm" variant="outline" icon={Check} onClick={() => void markTodo(it.id, 'done')}>
+                      完成
+                    </Button>
+                    <Button size="sm" variant="ghost" icon={EyeOff} onClick={() => void markTodo(it.id, 'ignored')}>
+                      忽略
+                    </Button>
+                  </li>
+                );
+              })}
+            {!items.some((it) => it.todoState === 'pending') && <li className="mp-meta px-3 py-6 text-center">当前没有未处理的待办</li>}
+          </ul>
+          <div className="border-t border-ink-900/[0.06] px-4 py-2.5">
+            <p className="mp-meta leading-relaxed">
+              「完成」= 这件事已经办掉；「忽略」= 这件事不需要你处理（例如与你无关、或已由他人完成）。
+              两者都会把条目标记为已处理并从待办清单移除，但状态不同、可在通知总览的「按待办」维度里分别查看。
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {pageView !== 'todo' && (
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* ---------------- 消息时间轴（REQ-047） ---------------- */}
         <section className="min-w-0">
@@ -169,8 +219,9 @@ export default function ExtractPage() {
           )}
         </section>
 
-        {/* ---------------- 通知总览（按维度分组 —— REQ-045） ---------------- */}
-        <aside className="space-y-3 xl:sticky xl:top-[132px] xl:self-start">
+        {/* ---------------- 通知总览（按维度分组 —— REQ-045）：仅在通知总览视图显示 ---------------- */}
+        {pageView === 'notices' && (
+        <aside className="space-y-3 xl:sticky xl:top-[128px] xl:self-start">
           <Card>
             <CardHeader title={`通知总览 · ${NOTICE_DIMENSION_LABEL[dimension]}`} icon={ListFilter} subtitle="按维度分组集中展示" />
             <div className="space-y-3 px-4 py-3.5">
@@ -213,7 +264,9 @@ export default function ExtractPage() {
             </ul>
           </Card>
         </aside>
+        )}
       </div>
+      )}
 
       <MessageDetailDrawer id={detailId} open={!!detailId} onClose={() => setDetailId(null)} />
     </div>

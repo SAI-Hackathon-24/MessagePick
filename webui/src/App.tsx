@@ -19,9 +19,15 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<OverviewPage />} />
-            <Route path="meme" element={<MemePage />} />
-            <Route path="extract" element={<ExtractPage />} />
-            <Route path="social" element={<SocialPage />} />
+            {/* 模块一：子项 = 梗词云 / 梗生命周期 / 梗列表 */}
+            <Route path="meme" element={<Navigate to="/meme/cloud" replace />} />
+            <Route path="meme/:view" element={<MemePage />} />
+            {/* 模块二：子项 = 消息时间轴 / 通知总览 / 待办与 DDL */}
+            <Route path="extract" element={<Navigate to="/extract/timeline" replace />} />
+            <Route path="extract/:view" element={<ExtractPage />} />
+            {/* 模块三：子项 = 人物画像 / 按兴趣找人 / 两人配对 / 我的契合度 / 人-人图谱 / 身份对齐 */}
+            <Route path="social" element={<Navigate to="/social/forward" replace />} />
+            <Route path="social/:view" element={<SocialPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

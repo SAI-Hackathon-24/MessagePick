@@ -58,21 +58,31 @@ export function PairMatchPanel({ aId, bId }: { aId: string; bId: string }) {
         <Card className="p-3.5">
           <div className="mp-section-title mb-2">逐维度差值（雷达叠加对比 —— REQ-059）</div>
           {pa.data && pb.data ? (
-            <HobbyRadar scores={pa.data.categoryScores} compare={{ name: pb.data.name, scores: pb.data.categoryScores }} height={240} />
+            <HobbyRadar
+              scores={pa.data.categoryScores}
+              activity={pa.data.activityScore}
+              activityOf={pb.data.activityScore}
+              compare={{ name: pb.data.name, scores: pb.data.categoryScores, activity: pb.data.activityScore }}
+              height={240}
+            />
           ) : (
             <LoadingState rows={1} label="正在读取两人维度分…" />
           )}
           <ul className="mt-2 grid grid-cols-1 gap-1">
             {INTEREST_CATEGORIES.map((c: InterestCategory) => {
               const cell = m.categoryDiff[c];
+              const isActivity = c === 'social';
+              const aScore = isActivity ? (pa.data?.activityScore?.score ?? 0) : cell.a;
+              const bScore = isActivity ? (pb.data?.activityScore?.score ?? 0) : cell.b;
+              const diff = isActivity ? aScore - bScore : cell.diff;
               return (
                 <li key={c} className="flex items-center justify-between text-[11.5px] text-ink-600">
-                  <span>{INTEREST_CATEGORY_LABEL[c]}</span>
+                  <span>{isActivity ? '活跃度' : INTEREST_CATEGORY_LABEL[c]}</span>
                   <span className="tabular-nums">
-                    {cell.a} / {cell.b}
-                    <span className={cell.diff === 0 ? 'ml-2 text-ink-400' : cell.diff > 0 ? 'ml-2 text-jade-700' : 'ml-2 text-amber-700'}>
-                      {cell.diff > 0 ? '+' : ''}
-                      {cell.diff}
+                    {aScore} / {bScore}
+                    <span className={diff === 0 ? 'ml-2 text-ink-400' : diff > 0 ? 'ml-2 text-jade-700' : 'ml-2 text-amber-700'}>
+                      {diff > 0 ? '+' : ''}
+                      {diff}
                     </span>
                   </span>
                 </li>

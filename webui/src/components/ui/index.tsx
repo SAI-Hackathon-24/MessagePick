@@ -4,7 +4,7 @@
  * 呈现一致，因此异常与空态组件集中在这里，由外壳与各模块复用。
  */
 import { AlertCircle, Inbox, Loader2, RefreshCw, ShieldAlert, type LucideIcon } from 'lucide-react';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { avatarColor } from '@/lib/format';
 import { ERROR_PRESENTATION, type ApiError, type ErrorCode } from '@/types';
@@ -384,4 +384,57 @@ export function Drawer({
 /** 术语提示：REQ-017 要求不混用两个「词云」与两个时间轴视图 */
 export function TermHint({ children }: { children: ReactNode }) {
   return <span className="mp-meta" title={typeof children === 'string' ? children : undefined}>{children}</span>;
+}
+
+/**
+ * 折叠区块
+ * =============================================================================
+ * 界面信息密度过高的直接对策：把「次级内容」默认收起，只留标题一行可展开。
+ * 用于证据列表、完整标签表、性格标签面板等长内容区。
+ */
+export function Collapsible({
+  title,
+  icon: Icon,
+  hint,
+  count,
+  defaultOpen = false,
+  children,
+  testId,
+  className,
+}: {
+  title: string;
+  icon?: LucideIcon;
+  hint?: string;
+  count?: number;
+  defaultOpen?: boolean;
+  children: ReactNode;
+  testId?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={cn('rounded-2xl border border-ink-900/[0.07] bg-white/70', className)}>
+      <button
+        type="button"
+        data-testid={testId}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-jade-500/[0.04]"
+      >
+        {Icon && (
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-jade-500/10 text-jade-600">
+            <Icon size={15} />
+          </span>
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="truncate text-sm font-semibold text-ink-800">{title}</span>
+            {count !== undefined && <Badge tone="neutral">{count}</Badge>}
+          </span>
+          {hint && <span className="mp-meta mt-0.5 block">{hint}</span>}
+        </span>
+        <span className="mp-meta shrink-0 text-jade-700">{open ? '收起' : '展开'}</span>
+      </button>
+      {open && <div className="border-t border-ink-900/[0.06] px-4 py-3.5">{children}</div>}
+    </div>
+  );
 }

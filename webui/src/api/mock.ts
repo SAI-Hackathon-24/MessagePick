@@ -30,6 +30,7 @@ import {
   activityCache,
   buildProfile,
   heatStateOf,
+  activityBreakdownOf,
   knownPersonIds,
   lifecycleOf,
   memberById,
@@ -160,15 +161,28 @@ export const mockMemeCloud = (f: GlobalFilter, layout: 'heat' | 'firstSeen', sca
     .map((m) => {
       const relevant = m.occurrences.filter((o) => inRange(o.at, f));
       const mine = m.occurrences.some((o) => memberById(o.memberId)?.personId === f.meId);
+      const lastUsedAt = m.occurrences[m.occurrences.length - 1]?.at ?? DATA_END.toISOString();
+      const unit = mockMemeUnit(m.id);
+      const monthly = unit?.monthly ?? [];
+      const maxMonthly = Math.max(...monthly.map((b) => b.count), 1);
       return {
         memeId: m.id,
         name: m.name,
         frequency: scale === 'cumulative' ? m.occurrences.length : relevant.length,
         occurrences: m.occurrences.length,
         type: m.type,
-        firstSeenAt: m.occurrences[0]?.at ?? DATA_END.toISOString(),
-        lastUsedAt: m.occurrences[m.occurrences.length - 1]?.at ?? DATA_END.toISOString(),
+        firstSeenAt: unit?.firstSeenAt ?? m.occurrences[0]?.at ?? DATA_END.toISOString(),
+        lastUsedAt,
         mine,
+        // 卡片需要的字段与梗单元同源，避免「点进去才有内容」
+        interpretation: unit?.interpretation,
+        heatState: unit?.heatState,
+        activeDays: unit?.lifecycle.activeDays,
+        weekOverWeek: unit?.weekOverWeek,
+        monthly,
+        king: unit?.king,
+        highlights: unit?.highlights,
+        intensity: monthly.map((b) => ({ month: b.month, intensity: b.count / maxMonthly, count: b.count })),
       };
     })
     .filter((e) => e.frequency > 0);
@@ -447,6 +461,12 @@ export const mockMessageDetail = (id: string): MessageDetail | null => {
 /* -------------------------------------------------------------------------- */
 /* MOD-007 模块三：社交画像                                                     */
 /* -------------------------------------------------------------------------- */
+/** 一级固定五类的中文名（REQ-017：不引入英文术语） */
+const CATEGORY_CN: Record<string, string> = { sports: '运动', art: '艺术', game: '游戏', entertainment: '娱乐', social: '社交' };
+
+/** 活跃度综合分：实现放在 fixtures（与原始指标同源），这里只做再导出 */
+export const buildActivityBreakdown = activityBreakdownOf;
+
 export const mockProfile = (personId: string): PersonProfile | null => (PERSON_NAMES[personId] ? buildProfile(personId) : null);
 
 export const mockPersonaPanel = (personId: string): PersonaPanel => ({
@@ -523,6 +543,7 @@ export const mockInterestToPeople = (entry: 'category' | 'tag', value: string, f
       confidence: Number(hit.reduce((s, t) => s + t.confidence, 0).toFixed(2)),
       replyMedianMinutes: replyCache[pid],
       activity: activityCache[pid] ?? 0,
+      activityScore: buildActivityBreakdown(pid),
       unknown: false,
       evidence: hit.flatMap((t) => t.evidence.slice(0, 2)),
     });
@@ -530,7 +551,7 @@ export const mockInterestToPeople = (entry: 'category' | 'tag', value: string, f
   // 未知成员仍列出并注记（REQ-081）
   unknownPersonIds().forEach((pid) => {
     if (entry === 'category' && value !== 'social') return;
-    people.push({ personId: pid, name: PERSON_NAMES[pid], confidence: 0, replyMedianMinutes: replyCache[pid], activity: activityCache[pid] ?? 0, unknown: true, evidence: [] });
+    people.push({ personId: pid, name: PERSON_NAMES[pid], confidence: 0, replyMedianMinutes: replyCache[pid], activity: activityCache[pid] ?? 0, activityScore: buildActivityBreakdown(pid), unknown: true, evidence: [] });
   });
   return {
     entry,
@@ -591,8 +612,6 @@ export const mockMyCompatibility = (): MyCompatibility => {
 };
 
 /** 组局建议（API-024）：仅文字建议，不含待办、不含可直接发送的文案（REQ-063） */
-/** 一级维度的中文名（REQ-017：不引入英文术语；组局建议里按维度检索时也要用中文） */
-const CATEGORY_CN: Record<string, string> = { sports: '运动', art: '艺术', game: '游戏', entertainment: '娱乐', social: '社交' };
 
 export const mockGatheringSuggestion = (interest: string, personIds: string[]): GatheringSuggestion => {
   // 检索入口可能是二级标签，也可能是一级维度（此时需换成中文名再写进建议文本）
@@ -618,14 +637,19 @@ export const mockSubmitAlignment = (candidateId: string, decision: 'confirmed' |
 
 /** 人-人关系图谱（REQ-069）：未知成员列入但零连线（REQ-081） */
 export const mockRelationGraph = (): RelationGraph => {
-  const nodes = knownPersonIds().map((p) => ({
+  /**
+   * ⚠️ 节点必须以**唯一的人员表**为准，未知只是一个标记。
+   * 曾经写成「已知人员 + 未知名单」两段拼接：两个名单一旦重叠就会产生重复节点，
+   * ECharts 的 graph 会因 `duplicate name or id` 直接抛异常、画布空白。
+   */
+  const unknownSet = new Set(unknownPersonIds());
+  const nodes = [...new Set(knownPersonIds())].map((p) => ({
     personId: p,
     name: PERSON_NAMES[p],
-    unknown: false,
+    unknown: unknownSet.has(p),
     activity: activityCache[p] ?? 0,
     isMe: p === ME_PERSON_ID,
   }));
-  unknownPersonIds().forEach((p) => nodes.push({ personId: p, name: PERSON_NAMES[p], unknown: true, activity: activityCache[p] ?? 0, isMe: false }));
   const links: RelationGraph['links'] = [];
   for (let i = 0; i < nodes.length; i += 1) {
     for (let j = i + 1; j < nodes.length; j += 1) {

@@ -4,7 +4,7 @@
  */
 import type { EChartsOption } from 'echarts';
 import { useMemo } from 'react';
-import type { InterestCategory, LifecycleRow, MonthlyBucket, PersonalityTrait } from '@/types';
+import type { ActivityBreakdown, InterestCategory, LifecycleRow, MonthlyBucket, PersonalityTrait } from '@/types';
 import { INTEREST_CATEGORY_LABEL, MEME_TYPE_COLOR, PERSONALITY_LABEL } from '@/types';
 import { EChart } from './EChart';
 
@@ -51,31 +51,121 @@ export function MonthlyBars({ buckets, height = 200 }: { buckets: MonthlyBucket[
   );
 }
 
-/** 生命周期条带（REQ-025、REQ-030：条带长度 = 生命周期跨度，按月显示强度） */
-export function LifecycleStrip({ row, height = 26 }: { row: LifecycleRow; height?: number }) {
+/**
+ * 梗生命周期总览（REQ-025、REQ-030）
+ * =============================================================================
+ * 原先是「每梗一行、各自一条独立条形图」：行与行之间没有共同的横轴，
+ * 既看不出「同一时间段在流行哪些梗」，也看不清「一个梗从初现到沉寂过了多久」。
+ * 改为**一张热力图**：横轴 = 月份（各梗共享），纵轴 = 梗，
+ * 单元格亮度 = 当月出现强度（顺序色阶），并在首现/峰值/沉寂月份加标记。
+ */
+export function LifecycleHeatmap({
+  rows,
+  leaders,
+  height,
+  onPick,
+}: {
+  rows: LifecycleRow[];
+  /** 当月领跑梗（用于横轴下方的注解） */
+  leaders?: { month: string; name: string }[];
+  height?: number;
+  onPick?: (memeId: string) => void;
+}) {
+  const months = useMemo(() => [...new Set(rows.flatMap((r) => r.monthlyIntensity.map((m) => m.month)))].sort(), [rows]);
+  /** 只展示活跃天数最长的若干梗，避免纵轴过长；其余通过表格视图查看 */
+  const shown = useMemo(() => [...rows].sort((a, b) => b.activeDays - a.activeDays).slice(0, 12), [rows]);
+
   const option = useMemo<EChartsOption>(
     () => ({
-      grid: { left: 0, right: 0, top: 2, bottom: 2 },
-      xAxis: { type: 'category', show: false, data: row.monthlyIntensity.map((m) => m.month) },
-      yAxis: { type: 'value', show: false, max: 1 },
+      grid: { left: 8, right: 16, top: 8, bottom: 56, containLabel: true },
       tooltip: {
         confine: true,
-        formatter: () => `${row.name}<br/>活跃天数 ${row.activeDays} 天<br/>峰值 ${row.peakAt.slice(0, 10)}<br/>沉寂 ${row.silentAt.slice(0, 10)}`,
+        backgroundColor: 'rgba(11,15,23,0.92)',
+        borderWidth: 0,
+        textStyle: { color: '#fff', fontSize: 12 },
+        formatter: (p: unknown) => {
+          const d = p as { value: [number, number, number, string] };
+          const [mi, ri, count] = d.value;
+          const row = shown[ri];
+          if (!row) return '';
+          const isFirst = row.firstSeenAt.slice(0, 7) === months[mi];
+          const isPeak = row.peakAt.slice(0, 7) === months[mi];
+          const isSilent = row.silentAt.slice(0, 7) === months[mi];
+          return [
+            `<b>${row.name}</b>`,
+            `${months[mi]}：出现 <b>${count}</b> 次`,
+            `首现 ${row.firstSeenAt.slice(0, 10)}　峰值 ${row.peakAt.slice(0, 10)}　沉寂 ${row.silentAt.slice(0, 10)}`,
+            `活跃 ${row.activeDays} 天`,
+            [isFirst ? '◀ 首现月' : '', isPeak ? '● 峰值月' : '', isSilent ? '▶ 沉寂月' : ''].filter(Boolean).join('　'),
+          ].join('<br/>');
+        },
+      },
+      xAxis: {
+        type: 'category',
+        data: months.map((m) => m.slice(2)),
+        axisLabel: { fontSize: 10, color: '#77839a' },
+        axisLine: { lineStyle: { color: 'rgba(11,15,23,0.1)' } },
+        splitArea: { show: false },
+      },
+      yAxis: {
+        type: 'category',
+        data: shown.map((r) => r.name),
+        axisLabel: { fontSize: 11, color: '#556074' },
+        axisLine: { lineStyle: { color: 'rgba(11,15,23,0.1)' } },
+      },
+      visualMap: {
+        min: 0,
+        max: 1,
+        show: false,
+        inRange: { color: ['#f2f7f4', '#b0e9cb', '#45bd87', '#059a4d', '#f59e0b'] },
       },
       series: [
         {
-          type: 'bar',
-          data: row.monthlyIntensity.map((m) => ({
-            value: m.intensity,
-            itemStyle: { color: intensityColor(m.intensity), borderRadius: 2 },
-          })),
-          barCategoryGap: '12%',
+          type: 'heatmap',
+          data: shown.flatMap((r, ri) =>
+            r.monthlyIntensity.map((m) => ({
+              value: [months.indexOf(m.month), ri, m.count, r.name],
+              // 无数据的月份留白，避免误读成「强度为 0」
+              itemStyle: m.count === 0 ? { color: 'rgba(11,15,23,0.03)' } : undefined,
+            })),
+          ),
+          label: { show: true, fontSize: 10, color: '#fff', formatter: (p: unknown) => String((p as { value: [number, number, number] }).value[2] || '') },
+          itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 },
+          emphasis: { itemStyle: { borderColor: '#2b3242', borderWidth: 2 } },
         },
       ],
+      ...(leaders && leaders.length
+        ? {
+            graphic: months.map((m, i) => {
+              const lead = leaders.find((l) => l.month === m);
+              return {
+                type: 'text',
+                left: `${((i + 0.5) / months.length) * 100}%`,
+                bottom: 4,
+                style: { text: lead ? `▲${lead.name}` : '', fontSize: 10, fill: '#77839a', align: 'center' },
+              };
+            }),
+          }
+        : {}),
     }),
-    [row],
+    [shown, months, leaders],
   );
-  return <EChart option={option} height={height} />;
+
+  const onEvents = useMemo(
+    () =>
+      onPick
+        ? {
+            click: (p: unknown) => {
+              const d = p as { value: [number, number, number, string] };
+              const row = shown[d.value?.[1] ?? -1];
+              if (row) onPick(row.memeId);
+            },
+          }
+        : undefined,
+    [onPick, shown],
+  );
+
+  return <EChart option={option} height={height ?? Math.max(260, shown.length * 38 + 90)} onEvents={onEvents} />;
 }
 
 /** 强度 → 顺序色阶（浅玉 → 微信绿 → 琥珀） */
@@ -90,30 +180,76 @@ function intensityColor(v: number): string {
 export function HobbyRadar({
   scores,
   compare,
+  activity,
+  activityOf,
+  compareName,
   height = 300,
   onAxisClick,
 }: {
+  /** 一级五类维度分（契约固定五类，来自 DM-013/DM-020） */
   scores: Record<InterestCategory, number>;
   /** 可选：叠加对比（两人逐维度差值 —— REQ-059） */
-  compare?: { name: string; scores: Record<InterestCategory, number> };
+  compare?: { name: string; scores: Record<InterestCategory, number>; activity?: ActivityBreakdown };
+  /** 本人的活跃度综合分（展示在第五根轴上，替代原「社交」轴的读法） */
+  activity?: ActivityBreakdown;
+  /** 对比对象的活跃度（叠加对比时使用） */
+  activityOf?: ActivityBreakdown;
+  compareName?: string;
   height?: number;
   onAxisClick?: (c: InterestCategory) => void;
 }) {
   const cats: InterestCategory[] = ['sports', 'art', 'game', 'entertainment', 'social'];
+
+  /**
+   * 第五根轴：数据层仍是契约固定的 social 维度，但**界面按活跃度展示**。
+   * 活跃度是 0–100 的综合分，与其它四轴（置信度求和，量级 0~4）不同量纲，
+   * 因此把五轴统一到一个 0–100 的显示刻度：前四轴按各自最大值放大，第五轴直接用综合分。
+   */
+  const interestMax = Math.max(1, ...cats.slice(0, 4).map((c) => Math.max(scores[c], compare?.scores[c] ?? 0)));
+  const toDisplay = (v: number, c: InterestCategory) => (c === 'social' ? 0 : Math.round((v / interestMax) * 100));
+
+  const axisNames = cats.map((c) => (c === 'social' ? '活跃度' : INTEREST_CATEGORY_LABEL[c]));
+
+  /** 悬停明细：活跃度轴展示三项原始指标，其余轴展示维度分构成 */
+  const detailOf = (c: InterestCategory, which: 'self' | 'compare'): string => {
+    if (c !== 'social') {
+      const value = which === 'self' ? scores[c] : (compare?.scores[c] ?? 0);
+      return `${INTEREST_CATEGORY_LABEL[c]}<br/>维度分（该维度下二级标签置信度之和）：<b>${value.toFixed(1)}</b>`;
+    }
+    const a = which === 'self' ? activity : activityOf;
+    if (!a || a.insufficient)
+      return `活跃度<br/><b>数据不足</b><br/>发言少于 ${10} 条，不做推测`;
+    const lines = a.metrics.map(
+      (m) => `${m.label}：<b>${m.raw}</b>${m.normalized === null ? '（无样本）' : `　→ 归一化 ${m.normalized}`}<br/><span style="opacity:.7">群内最大 ${m.groupMax} · 有效权重 ${(m.effectiveWeight * 100).toFixed(0)}%</span>${m.note ? `<br/><span style="opacity:.7">${m.note}</span>` : ''}`,
+    );
+    return `活跃度综合分：<b>${a.score}</b><br/><span style="opacity:.8">消息条数 50% + 回复时长 30% + 新鲜度 20%</span><br/><br/>${lines.join('<br/><br/>')}`;
+  };
+
+  const selfValue = cats.map((c) => (c === 'social' ? (activity && !activity.insufficient ? activity.score : 0) : toDisplay(scores[c], c)));
+  const compareValue = compare ? cats.map((c) => (c === 'social' ? (compare.activity && !compare.activity.insufficient ? compare.activity.score : 0) : toDisplay(compare.scores[c], c))) : [];
+
   const option = useMemo<EChartsOption>(
     () => ({
-      tooltip: { confine: true },
+      tooltip: {
+        confine: true,
+        backgroundColor: 'rgba(11,15,23,0.92)',
+        borderWidth: 0,
+        textStyle: { color: '#fff', fontSize: 12, lineHeight: 18 },
+        formatter: (p: unknown) => {
+          const d = p as { name?: string; dataIndex?: number; seriesName?: string; value?: number[] };
+          const c = cats[d.dataIndex ?? 0];
+          const which = compare && d.seriesName === compareName ? 'compare' : 'self';
+          const head = `${axisNames[d.dataIndex ?? 0]}${which === 'compare' ? `（${compareName}）` : ''}<br/>`;
+          return head + detailOf(c, which);
+        },
+      },
       legend: compare ? { bottom: 0, textStyle: { fontSize: 11 } } : undefined,
       radar: {
-        // 维度分 = 该维度下全部二级标签置信度之和（REQ-080）。
-        // 标签置信度 0~1、每人 4~7 个标签，故维度分通常落在 0~4；
-        // 轴上限按当次数据的最大值上取整，保证形状可读、且不改变分数本身。
-        indicator: cats.map((c) => ({
-          name: INTEREST_CATEGORY_LABEL[c],
-          // 轴上限既要不小于数据最大值，又要留足刻度间隔（否则 ECharts 会告警刻度不可读）
-          max: Math.max(2, Math.ceil(Math.max(...cats.map((k) => Math.max(scores[k], compare?.scores[k] ?? 0))) + 0.5)),
-        })),
-        splitNumber: 4,
+        // 五轴统一为 0–100 显示刻度：前四轴按维度分最大值放大，第五轴为活跃度综合分。
+        // 这样活跃度与兴趣维度可同图比较，且不改变各自的原始数值（悬停明细给出原始值）。
+        // 显式给出刻度数：否则 ECharts 会在 0–100 的小刻度下提示 ticks may be not readable
+        indicator: axisNames.map((name) => ({ name, max: 100, min: 0 })),
+        splitNumber: 5,
         radius: '62%',
         splitLine: { lineStyle: { color: 'rgba(11,15,23,0.08)' } },
         axisName: { fontSize: 11, color: '#556074' },
@@ -122,28 +258,33 @@ export function HobbyRadar({
         {
           type: 'radar',
           data: [
-            { value: cats.map((c) => Number(scores[c].toFixed(2))), name: '本次', areaStyle: { opacity: 0.22 }, lineStyle: { color: '#07C160' }, itemStyle: { color: '#07C160' } },
+            { value: selfValue, name: '本次', areaStyle: { opacity: 0.22 }, lineStyle: { color: '#07C160' }, itemStyle: { color: '#07C160' } },
             ...(compare
-              ? [
-                  {
-                    value: cats.map((c) => Number(compare.scores[c].toFixed(2))),
-                    name: compare.name,
-                    areaStyle: { opacity: 0.16 },
-                    lineStyle: { color: '#f59e0b' },
-                    itemStyle: { color: '#f59e0b' },
-                  },
-                ]
+              ? [{ value: compareValue, name: compareName ?? '对比', areaStyle: { opacity: 0.16 }, lineStyle: { color: '#f59e0b' }, itemStyle: { color: '#f59e0b' } }]
               : []),
           ],
         },
       ],
     }),
-    [scores, compare, cats],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scores, compare, activity, activityOf, compareName, cats],
   );
+
   const onEvents = useMemo(
-    () => (onAxisClick ? { click: () => cats.forEach((c) => void c) } : undefined),
+    () =>
+      onAxisClick
+        ? {
+            click: (p: unknown) => {
+              const d = p as { dataIndex?: number };
+              const c = cats[d.dataIndex ?? -1];
+              if (c) onAxisClick(c);
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [onAxisClick, cats],
   );
+
   return <EChart option={option} height={height} onEvents={onEvents} />;
 }
 

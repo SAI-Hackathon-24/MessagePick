@@ -269,6 +269,24 @@ export interface MemeCloudEntry {
   lastUsedAt: string;
   /** 「我相关」标记（REQ-006 视角） */
   mine?: boolean;
+
+  /* ---- 以下为梗速览条展示所需（与梗单元同源，避免卡片内容比单元还空） ---- */
+  /** 解读：什么意思 / 从哪来 / 现在怎么用（REQ-026） */
+  interpretation?: string;
+  /** 热度状态三档（REQ-028） */
+  heatState?: HeatState;
+  /** 活跃天数（首现 → 最近调用） */
+  activeDays?: number;
+  /** 周环比（REQ-028） */
+  weekOverWeek?: number;
+  /** 月度分布（REQ-029），卡片内用迷你柱呈现 */
+  monthly?: MonthlyBucket[];
+  /** 梗王与主要使用者（REQ-031） */
+  king?: MemeKing;
+  /** 精华消息：文字与梗图都支持（REQ-032） */
+  highlights?: HighlightMessage[];
+  /** 按月强度，卡片内画生命周期条（REQ-030） */
+  intensity?: { month: string; intensity: number; count: number }[];
 }
 
 export interface MemeCloudResult {
@@ -518,9 +536,53 @@ export interface MemberInterestHint {
  *   forward 正向 = 人 → 兴趣（人物兴趣画像）
  *   reverse 反向 = 兴趣 → 人（找搭子）
  */
+/**
+ * 活跃度综合分（**仅用于展示的派生值，不属于契约字段**）
+ * =============================================================================
+ * 口径（由提出者给定）：
+ *   · 消息条数          权重 50%
+ *   · 平均回复时长      权重 30%（越短得分越高）
+ *   · 活跃新鲜度        权重 20%（距最近一次发言的天数，越近越高）
+ *   每项先除以群内最大值归一化到 0–100，再加权求和。
+ *
+ * 与契约的关系（务必注意，不要混淆）：
+ *   · `DM-011` 的「活跃度」= **数值（发言量）**，口径为跨群发言量，用于契合度因子
+ *     （`REQ-057`、`REQ-058`）——本类型**不替换**它，`PersonProfile.activity` 仍是发言量。
+ *   · 本类型只是雷达图第五轴的展示值（替代「社交」轴的读法），取值与三项原始指标
+ *     一并返回，便于悬停时展示明细而不只给一个总分。
+ *   · 样本不足（消息条数 < 10）时不做推测，按 `insufficient` 展示「数据不足」。
+ */
+export interface ActivityBreakdown {
+  /** 综合分 0–100（加权求和后的结果） */
+  score: number;
+  /** 样本不足，不做推测（消息条数 < 10） */
+  insufficient: boolean;
+  /** 三项原始指标 + 各自归一化后的分值，供悬停明细展示 */
+  metrics: {
+    key: 'messages' | 'reply' | 'freshness';
+    label: string;
+    /** 原始值（消息条数 / 分钟 / 天数） */
+    raw: number;
+    /** 归一化后 0–100；无样本时为 null */
+    normalized: number | null;
+    /** 参与计算的权重（无样本的维度权重会被按比例摊到其余维度） */
+    effectiveWeight: number;
+    /** 该项在当前群内的最大值，用于说明归一化基准 */
+    groupMax: number;
+    /** 无样本时给出来源说明（如「未被 @ 或接话，无样本」） */
+    note?: string;
+  }[];
+}
+
 export type SocialDirection = 'forward' | 'reverse';
 
 /** 一级固定五类，不增不减（REQ-052） */
+/**
+ * 一级维度：契约层固定五类，**不增不减**（REQ-052、DM-013）。
+ * ⚠️ 雷达图的第五根轴在界面上显示为「活跃度」（替代原「社交」轴的可读性），
+ * 但数据层仍是这五类，`social` 分类与 `categoryScores.social` 均照常存在，
+ * 以保证与 `DM-013`/`DM-020` 的口径一致。
+ */
 export type InterestCategory = 'sports' | 'art' | 'game' | 'entertainment' | 'social';
 
 export const INTEREST_CATEGORY_LABEL: Record<InterestCategory, string> = {
@@ -583,8 +645,13 @@ export interface PersonProfile {
   personalCloud: { name: string; confidence: number; category: InterestCategory }[];
   /** 性格标签：仅已确认的、仅本人可见（REQ-075、REQ-077） */
   personality: PersonaTrait[];
-  /** 活跃度（发言量；与「社交」维度同源 —— REQ-057） */
+  /** 活跃度（**发言量**，DM-011 口径；用于契合度因子，只计一次 —— REQ-057） */
   activity: number;
+  /**
+   * 活跃度综合分：雷达图第五轴的展示值（消息条数 50% + 回复时长 30% + 新鲜度 20%）。
+   * 由前端按三项原始指标计算；后端若直接下发同口径结果则优先使用后端的。
+   */
+  activityScore?: ActivityBreakdown;
   /** 回复时长中位数（分钟）；无可统计样本时为空（REQ-066） */
   replyMedianMinutes?: number;
   /** 共同群（跨群合并后） */
@@ -623,7 +690,10 @@ export interface InterestPeopleResult {
     confidence: number;
     /** 回复时长与活跃度（REQ-065） */
     replyMedianMinutes?: number;
+    /** 发言量（DM-011 口径） */
     activity: number;
+    /** 活跃度综合分：结果里「活跃度」的展示值（消息 50% + 回复时长 30% + 新鲜度 20%） */
+    activityScore: ActivityBreakdown;
     /** 未知成员仍列出并注记（REQ-081） */
     unknown: boolean;
     evidence: SourceRef[];

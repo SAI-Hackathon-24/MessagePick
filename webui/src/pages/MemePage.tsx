@@ -10,6 +10,7 @@
  *   · 生成：G1 表情包（三档素材 + 模板 + 文案 → 4 张）、G2 文字变体（5 条）、G3 新梗候选（确认后入库）
  */
 import { useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Clock, Flame, Grid3x3, RefreshCw, Sparkles, Table2 } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
@@ -29,7 +30,8 @@ import {
 import { Button } from '@/components/shell/Button';
 import { Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { MemeWordCloud } from '@/components/charts/MemeWordCloud';
-import { LifecycleStrip } from '@/components/charts/Charts';
+import { MemeCardStrip } from '@/components/unit/MemeCardStrip';
+import { LifecycleHeatmap } from '@/components/charts/Charts';
 import { MemeUnitDrawer } from '@/components/unit/MemeUnitDrawer';
 import { GeneratePanel } from '@/components/unit/GeneratePanel';
 
@@ -37,7 +39,11 @@ type View = 'cloud' | 'lifecycle' | 'table';
 
 export default function MemePage() {
   const { filter, clearFilter } = useAppState();
-  const [view, setView] = useState<View>('cloud');
+  const { view: viewParam } = useParams();
+  const navigate = useNavigate();
+  /** 视图由路由决定（左侧导航的子项），页面内切换时同步改 URL */
+  const view: View = viewParam === 'lifecycle' ? 'lifecycle' : viewParam === 'table' ? 'table' : 'cloud';
+  const setView = (v: View) => navigate(`/meme/${v === 'lifecycle' ? 'lifecycle' : v === 'table' ? 'table' : 'cloud'}`);
   const [layout, setLayout] = useState<CloudLayout>('heat');
   const [scale, setScale] = useState<FontScaleMode>('cumulative');
   const [mineOnly, setMineOnly] = useState(false);
@@ -172,21 +178,23 @@ export default function MemePage() {
             </div>
           </Card>
 
-          {/* 列表 / 表格等价视图入口提示（REQ-021） */}
+          {/* 梗速览条：词云解决「哪个梗大」，速览解决「它是什么、火过多久、谁在带」 */}
+          <MemeCardStrip entries={entries} onPick={(e) => void openUnit(e)} />
+
           <NoticeBar tone="sky">
-            无障碍等价形式：切到「列表 / 表格」可以看到与词云完全等价的梗数据（可复制）。
+            无障碍等价形式：左侧导航切到「梗列表 / 表格」可以看到与词云完全等价的梗数据（可复制）。
           </NoticeBar>
         </>
       )}
 
-      {/* ---------------- 梗生命周期视图 ---------------- */}
+      {/* ---------------- 梗生命周期视图（REQ-025、REQ-030） ---------------- */}
       {view === 'lifecycle' && (
         <Card className="overflow-hidden">
           <CardHeader
             title="梗生命周期视图"
             icon={Clock}
-            subtitle="每梗一行，条带长度 = 生命周期跨度，条带内按月显示出现强度（顺序色阶）"
-            right={<span className="mp-meta">首现 → 峰值 → 沉寂</span>}
+            subtitle="横轴 = 月份（所有梗共享同一时间轴），纵轴 = 梗；单元格里的数字 = 当月被提及次数，颜色越暖越活跃"
+            right={<span className="mp-meta">点击单元格可打开对应梗单元</span>}
           />
           <div className="px-4 py-3.5">
             {lifecycle.loading && !lifecycle.data ? (
@@ -195,49 +203,43 @@ export default function MemePage() {
               <ErrorState error={lifecycle.error} onRetry={lifecycle.refetch} onClearFilter={clearFilter} />
             ) : (
               <>
-                {/* 当月领跑梗（REQ-025） */}
-                <div className="mb-3 flex flex-wrap gap-1.5">
-                  <span className="mp-meta mr-1">当月领跑梗</span>
-                  {(lifecycle.data?.monthlyLeaders ?? []).slice(-6).map((l) => (
-                    <Chip key={l.month} title={`${l.month} 出现 ${l.count} 次`}>
-                      {l.month.slice(5)}：{l.name}
+                {/* 怎么读这张图：把「生命周期」这件抽象的事讲清楚 */}
+                <div className="mb-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
+                    <div className="mp-section-title mb-1">一眼看出「火过多久」</div>
+                    <p className="mp-meta leading-relaxed">同一行的有色格子从最左到最右，就是这个梗从初现到沉寂的跨度；格子越靠右越说明它凉得晚。</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
+                    <div className="mp-section-title mb-1">一眼看出「这段时间在玩什么」</div>
+                    <p className="mp-meta leading-relaxed">同一列里颜色最暖的格子，就是那个月被反复使用的梗；横轴下方标出当月领跑梗。</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
+                    <div className="mp-section-title mb-1">颜色含义</div>
+                    <div className="flex items-center gap-1.5">
+                      {['#f2f7f4', '#b0e9cb', '#45bd87', '#059a4d', '#f59e0b'].map((c, i) => (
+                        <span key={c} className="flex items-center gap-1">
+                          <span className="h-3 w-4 rounded-sm border border-ink-900/10" style={{ background: c }} />
+                          <span className="mp-meta">{['无', '少', '中', '多', '峰值'][i]}</span>
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mp-meta mt-1">按当月次数排序，不是固定阈值。</p>
+                  </div>
+                </div>
+
+                <LifecycleHeatmap
+                  rows={lifecycle.data?.rows ?? []}
+                  leaders={lifecycle.data?.monthlyLeaders ?? []}
+                  onPick={(id) => void openUnit({ memeId: id } as MemeCloudEntry)}
+                />
+
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <span className="mp-meta">当月领跑梗：</span>
+                  {(lifecycle.data?.monthlyLeaders ?? []).map((l) => (
+                    <Chip key={l.month} title={`${l.month} 出现 ${l.count} 次`} onClick={() => void openUnit({ memeId: l.memeId } as MemeCloudEntry)}>
+                      {l.month.slice(2)} · {l.name}
                     </Chip>
                   ))}
-                </div>
-                <ul className="space-y-1.5">
-                  {(lifecycle.data?.rows ?? []).slice(0, 20).map((row) => (
-                    <li key={row.memeId} className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void openUnit({ memeId: row.memeId } as MemeCloudEntry)}
-                        className="flex w-[150px] shrink-0 items-center gap-1.5 text-left hover:text-jade-700 sm:w-[180px]"
-                      >
-                        <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: MEME_TYPE_COLOR[row.type] }} />
-                        <span className="truncate text-[13px] font-semibold text-ink-700">{row.name}</span>
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <LifecycleStrip row={row} />
-                      </div>
-                      <span className="w-[76px] shrink-0 text-right text-[11px] tabular-nums text-ink-400" title={`首现 ${row.firstSeenAt.slice(0, 10)} / 沉寂 ${row.silentAt.slice(0, 10)}`}>
-                        {row.activeDays} 天
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="mp-meta mt-3 flex flex-wrap items-center gap-3">
-                  <span>色阶：</span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#d6f5e3' }} /> 低
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#45bd87' }} /> 中
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#059a4d' }} /> 高
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-4 rounded-sm" style={{ background: '#f59e0b' }} /> 峰值月
-                  </span>
                 </div>
               </>
             )}

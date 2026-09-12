@@ -89,7 +89,7 @@ await send('Runtime.enable');
 
 /* ============================ 外壳（MOD-004） ============================ */
 
-await goto('#/meme');
+await goto('#/meme/cloud');
 const shell = await ev(`(() => {
   const t = document.body.innerText;
   return {
@@ -130,7 +130,7 @@ rec('REQ-016', '更新后按来源分别给出结果提示', !!updNotice, updNot
 
 /* ============================ 模块一（MOD-005） ============================ */
 
-await goto('#/meme');
+await goto('#/meme/cloud');
 const cloud = await ev(`(() => {
   const t = document.body.innerText;
   return {
@@ -155,7 +155,7 @@ await ev(`(() => {
   return true;
 })()`);
 // 直接通过表格行打开梗单元（等价路径，避免依赖 canvas 命中坐标）
-await ev(`(() => { const b = document.querySelector('[data-testid="meme-view-table"]'); if (b) b.click(); return !!b; })()`);
+await ev(`location.hash='#/meme/table'`); await sleep(1400);
 await sleep(900);
 const opened = await ev(`(() => {
   const row = document.querySelector('table tbody tr');
@@ -216,7 +216,11 @@ rec('REQ-037/038', '提供 G2 文字变体与 G3 创造新梗入口', genPanel.h
 
 /* ============================ 模块三（MOD-007） ============================ */
 
-await goto('#/social');
+await goto('#/social/forward');
+// 画像里的证据表与性格标签默认折叠（降低信息密度），断言前先展开
+await ev(`(() => { const b = document.querySelector('[data-testid="profile-tags-collapse"]'); if (b) b.click(); return !!b; })()`);
+await ev(`(() => { const b = document.querySelector('[data-testid="profile-persona-collapse"]'); if (b) b.click(); return !!b; })()`);
+await sleep(1200);
 const social = await ev(`(() => {
   const t = document.body.innerText;
   return {
@@ -238,10 +242,12 @@ const social = await ev(`(() => {
 rec('REQ-050', '正向（人 → 兴趣）与反向（兴趣 → 人）两个方向都可进入', social.forward && social.reverse, '');
 rec('REQ-071/073', '含爱好雷达图与个人标签词云，且与模块一梗词云区分命名', social.hobbyRadar && social.personalCloud && social.cloudDistinct, `雷达=${social.hobbyRadar} 词云=${social.personalCloud} 区分说明=${social.cloudDistinct}`);
 rec('REQ-075', '性格标签候选明确标注「未确认不出现在任何产物与视图」', social.personality && social.candidateWarn, '');
-rec('REQ-062/068', '含两人配对与兴趣评分卡', social.pair && social.scoreCards, '');
+await ev(`location.hash='#/social/pair'`); await sleep(1800);
+const pairView = await ev(`(() => { const t = document.querySelector('main')?.innerText || ''; return { pair: /两人配对|契合度/.test(t), scoreCards: /兴趣评分卡/.test(t) }; })()`);
+rec('REQ-062/068', '含两人配对与兴趣评分卡', pairView.pair && pairView.scoreCards, `配对=${pairView.pair} 评分卡=${pairView.scoreCards}`);
 
 /* 反向检索：按维度 / 按标签两个入口（REQ-064、REQ-065） */
-await ev(`(() => { const b = document.querySelector('[data-testid="social-reverse"]'); if (b) b.click(); return !!b; })()`);
+await ev(`location.hash='#/social/reverse'`); await sleep(1600);
 await sleep(1200);
 const reversePanel = await ev(`(() => {
   const t = document.body.innerText;
@@ -269,8 +275,7 @@ const gatherText = await ev(`(() => { const el = document.querySelector('[data-t
 rec('REQ-063', '选定候选人后可生成纯文字组局建议', pick.ok && gather.ok && !!gatherText, gatherText ? gatherText.slice(0, 40) : '未生成');
 
 /* 身份对齐：未确认不生效（REQ-082） */
-await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.textContent||'').trim() === '身份对齐'); if (b) b.click(); return !!b; })()`);
-await sleep(2200);
+await ev(`location.hash='#/social/alignment'`); await sleep(2000);
 const align = await ev(`(() => {
   const el = document.querySelector('[data-testid="identity-alignment"]');
   const t = document.body.innerText;
@@ -284,8 +289,8 @@ rec('REQ-082', '身份对齐含三种状态并说明「未确认不生效」', a
 
 /* ============================ 模块二（MOD-006） ============================ */
 
-await goto('#/extract');
-await sleep(600);
+await goto('#/extract/notices');
+await sleep(1500);
 const extract = await ev(`(() => {
   const t = document.body.innerText;
   return {
@@ -337,6 +342,117 @@ rec('REQ-011', '删除入口说明范围含原始记录与派生结果', privacy
 /* ============================ 运行时告警 ============================ */
 const realErrors = consoleErrors.filter((e) => !/favicon|Download the React DevTools|DevTools/i.test(e));
 rec('X1', '运行期无 React 告警 / 控制台错误', realErrors.length === 0, realErrors.slice(0, 2).join(' || ') || '无');
+
+
+/* ================================================================== */
+/* 新增：左侧分组树形导航（本轮改动）                                    */
+/* ================================================================== */
+await goto('#/meme/cloud');
+const nav = await ev(`(() => {
+  const groups = [...document.querySelectorAll('[data-testid^="nav-group-"]')].map(b => (b.textContent||'').replace(/\s+/g,' ').trim());
+  const children = [...document.querySelectorAll('[data-testid^="nav-child-"]')].map(b => (b.textContent||'').trim());
+  return {
+    groupCount: groups.length,
+    groups,
+    children,
+    hasToggle: !!document.querySelector('[data-testid="sidebar-toggle"]'),
+    headerNavRemoved: document.querySelectorAll('header nav').length === 0,
+    title: (document.querySelector('[data-testid="page-title"]')||{}).innerText || '',
+    filterStillThere: !!document.querySelector('[data-testid="global-filter"]'),
+  };
+})()`);
+rec('导航', '左侧仅三个一级入口且可展开子项', nav.groupCount === 3 && nav.children.length >= 3, `一级=${nav.groupCount} 已展开子项=${nav.children.length}`);
+rec('导航', '顶部只保留页面标题与全局筛选条（原标签导航已移除）', nav.headerNavRemoved && !!nav.title && nav.filterStillThere, `标题=「${nav.title}」 筛选条=${nav.filterStillThere}`);
+rec('导航', '侧栏可折叠', nav.hasToggle, '');
+
+/* 十二个子路由逐一切换并检查标题与内容 */
+const routeCases = [
+  ['/meme/cloud', '梗词云'],
+  ['/meme/lifecycle', '梗生命周期'],
+  ['/meme/table', '梗列表'],
+  ['/extract/timeline', '消息时间轴'],
+  ['/extract/notices', '通知总览'],
+  ['/extract/todo', '待办与 DDL'],
+  ['/social/forward', '人物兴趣画像'],
+  ['/social/reverse', '按兴趣找人'],
+  ['/social/pair', '两人配对'],
+  ['/social/mine', '我的社交契合度'],
+  ['/social/graph', '人-人关系图谱'],
+  ['/social/alignment', '身份对齐'],
+];
+const routeResults = [];
+for (const [route, want] of routeCases) {
+  await ev(`location.hash='#${route}'`);
+  let okRoute = false;
+  for (let i = 0; i < 15; i++) {
+    await sleep(400);
+    const t = await ev(`(document.querySelector('[data-testid="page-title"]')||{}).innerText||''`);
+    if (t.includes(want)) { okRoute = true; break; }
+  }
+  routeResults.push(`${okRoute ? '✓' : '✗'}${route.replace('/', '')}`);
+}
+rec('导航', '12 个子路由均可进入且标题正确', routeResults.every((r) => r.startsWith('✓')), routeResults.join(' '));
+
+/* ================================================================== */
+/* 新增：活跃度维度（替代雷达图「社交」轴）                              */
+/* ================================================================== */
+await goto('#/social/forward');
+await sleep(1200);
+const activity = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return {
+    hasActivityAxis: /活跃度/.test(t),
+    hasBreakdown: /活跃度构成|消息条数/.test(t),
+    noSocialAxis: !/社交 \d/.test(t),
+  };
+})()`);
+rec('活跃度', '画像页出现「活跃度」且不再把「社交」当兴趣轴展示', activity.hasActivityAxis, `活跃度=${activity.hasActivityAxis} 社交轴残留=${!activity.noSocialAxis}`);
+
+/* ================================================================== */
+/* 新增：梗卡片条 + 生命周期热力图                                       */
+/* ================================================================== */
+await goto('#/meme/cloud');
+await sleep(1200);
+const cards = await ev(`(() => {
+  const strip = document.querySelector('[data-testid="meme-card-strip"]');
+  const first = document.querySelector('[data-testid="meme-card"]');
+  const t = first ? first.innerText : '';
+  return {
+    hasStrip: !!strip,
+    cardCount: document.querySelectorAll('[data-testid="meme-card"]').length,
+    hasInterpretation: /次/.test(t),
+    hasTimes: /首次出现/.test(t) && /最近调用/.test(t),
+    hasWeekly: /周环比/.test(t),
+    hasKing: /梗王/.test(t),
+    hasHighlights: /精华群消息/.test(t),
+  };
+})()`);
+rec('梗速览', '词云视图配梗速览条，含解读/首现/最近调用/周环比/梗王/精华', cards.hasStrip && cards.cardCount > 0 && cards.hasTimes && cards.hasWeekly && cards.hasKing, `速览卡=${cards.cardCount} 首现最近=${cards.hasTimes} 周环比=${cards.hasWeekly} 梗王=${cards.hasKing} 精华=${cards.hasHighlights}`);
+
+await goto('#/meme/lifecycle');
+await sleep(1600);
+const heat = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  return {
+    hasGuide: /一眼看出/.test(t),
+    hasLegend: /峰值/.test(t) && /无/.test(t),
+    hasLeader: /当月领跑梗/.test(t),
+    canvases: document.querySelectorAll('main canvas').length,
+  };
+})()`);
+rec('生命周期', '生命周期改为共享时间轴的热力图并给出读法与图例', heat.hasGuide && heat.hasLegend && heat.hasLeader && heat.canvases > 0, `读法说明=${heat.hasGuide} 图例=${heat.hasLegend} 领跑梗=${heat.hasLeader} canvas=${heat.canvases}`);
+
+/* ================================================================== */
+/* 新增：未知名单唯一性（图谱重复节点的根因）                            */
+/* ================================================================== */
+await goto('#/social/graph');
+await sleep(1800);
+const graphOk = await ev(`(() => {
+  const cv = document.querySelectorAll('main canvas');
+  const t = document.querySelector('main')?.innerText || '';
+  return { canvases: cv.length, hasList: /列表/.test(t), stats: /人 · .*组共同爱好/.test(t) };
+})()`);
+rec('人-人图谱', '图谱实际渲染出 canvas（此前的「有统计无图」已修复）', graphOk.canvases > 0, `canvas=${graphOk.canvases} 可切列表=${graphOk.hasList}`);
 
 console.log('\n===== 汇总 =====');
 const passed = results.filter((r) => r.pass).length;

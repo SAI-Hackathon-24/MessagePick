@@ -15,12 +15,13 @@
  *   · 人-人关系图谱（REQ-069）与兴趣时间轴 / 事件流（REQ-067，仅可视化，不参与权重 —— REQ-087）
  */
 import { useState } from 'react';
-import { Compass, HeartHandshake, Link2, Tags, UserRound, Users } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { HeartHandshake, Link2, Tags, Users } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
-import { INTEREST_CATEGORY_LABEL, type SocialDirection } from '@/types';
-import { Badge, Card, CardHeader, Chip, NoticeBar, SectionHeading, Stat } from '@/components/ui';
+import { INTEREST_CATEGORY_LABEL } from '@/types';
+import { Badge, Card, CardHeader, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { PersonProfilePanel } from '@/components/unit/PersonProfilePanel';
 import { InterestToPeoplePanel } from '@/components/unit/InterestToPeoplePanel';
 import { PairMatchPanel } from '@/components/unit/PairMatchPanel';
@@ -28,20 +29,31 @@ import { MyCompatibilityPanel } from '@/components/unit/MyCompatibilityPanel';
 import { IdentityAlignmentPanel } from '@/components/unit/IdentityAlignmentPanel';
 import { RelationGraphPanel, InterestTimelinePanel } from '@/components/unit/SocialExtraPanels';
 
-type Direction = SocialDirection;
 
 export default function SocialPage() {
-  const [direction, setDirection] = useState<Direction>('forward');
-  const [personId, setPersonId] = useState('p_陈禹哲');
-  const [pairA, setPairA] = useState('p_陈禹哲');
-  const [pairB, setPairB] = useState('p_杨贺尧');
-  const [extraTab, setExtraTab] = useState<'none' | 'graph' | 'timeline' | 'alignment' | 'mine'>('none');
-
+  const { view } = useParams();
+  const navigate = useNavigate();
+  /** 左侧导航的子项决定当前展示哪个视图（REQ-050 的两个方向 + 其余产物） */
+  const active = (view ?? 'forward') as 'forward' | 'reverse' | 'pair' | 'mine' | 'graph' | 'alignment' | 'timeline';
+  /**
+   * 选中的人默认取「我」（由数据派生，不硬编码 personId —— 人标识是后端下发的，
+   * 硬编码会在标识规则变化时静默失效）。配对默认取「我」与前两位其他人。
+   */
   const graph = useApi(() => api.relationGraph(), []);
+  const allPeople = graph.data?.nodes ?? [];
+  const meId = allPeople.find((n) => n.isMe)?.personId ?? allPeople[0]?.personId ?? '';
+  const [personId, setPersonId] = useState('');
+  const [pairA, setPairA] = useState('');
+  const [pairB, setPairB] = useState('');
+  const selectedPerson = personId || meId;
+  const selectedA = pairA || meId;
+  const selectedB = pairB || allPeople.find((n) => n.personId !== (pairA || meId))?.personId || '';
+
   const cards = useApi(() => api.interestScoreCards(), []);
   const mine = useApi(() => api.myCompatibility(), []);
 
-  const people = graph.data?.nodes.filter((n) => !n.unknown) ?? [];
+  /** 未知成员不进「选择成员」列表（他们按 REQ-081 仍出现在图谱里，但画像无内容） */
+  const people = allPeople.filter((n) => !n.unknown);
 
   return (
     <div className="space-y-5">
@@ -53,57 +65,18 @@ export default function SocialPage() {
         <Stat label="我的整体融入度" value={mine.data?.integration ?? '—'} unit="分" hint="我 vs 每个群友的契合度均值" icon={HeartHandshake} tone="jade" />
       </section>
 
-      {/* 方向切换：同一份数据的两个查询方向（REQ-050） */}
-      <section className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 rounded-xl bg-ink-900/[0.04] p-1">
-          {(
-            [
-              { k: 'forward', label: '正向社交', desc: '人 → 兴趣：他喜欢什么', icon: UserRound },
-              { k: 'reverse', label: '反向社交', desc: '兴趣 → 人：找搭子', icon: Compass },
-            ] as const
-          ).map((d) => (
-            <button
-              key={d.k}
-              type="button"
-              data-testid={`social-${d.k}`}
-              onClick={() => setDirection(d.k)}
-              className={cn('inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors', direction === d.k ? 'bg-white text-jade-700 shadow-sm' : 'text-ink-500 hover:text-ink-700')}
-            >
-              <d.icon size={14} />
-              <span className="text-left">
-                <span className="block">{d.label}</span>
-                <span className="mp-meta block">{d.desc}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-        <span className="mp-meta">分析对象：整个群的社交生态 · 匹配范围：跨全部已采集的历史群</span>
-      </section>
+      {/* 当前位置与口径说明（切换入口在左侧导航，避免同一组入口出现两处） */}
+      <NoticeBar tone="sky" className="leading-relaxed">
+        正向社交 = 人 → 兴趣（他喜欢什么）；反向社交 = 兴趣 → 人（找搭子）。两者是**同一份「人 ↔ 兴趣」数据的两个查询方向**（REQ-050）。
+        分析对象是整个群的社交生态，匹配范围为跨全部已采集的历史群（REQ-051）。
+      </NoticeBar>
 
-      {/* 附加视图入口 */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mp-meta mr-1">更多视图</span>
-        {(
-          [
-            { k: 'none', label: '不展开' },
-            { k: 'mine', label: '我的社交契合度' },
-            { k: 'graph', label: '人-人关系图谱' },
-            { k: 'timeline', label: '兴趣时间轴 / 事件流' },
-            { k: 'alignment', label: '身份对齐' },
-          ] as const
-        ).map((t) => (
-          <Chip key={t.k} active={extraTab === t.k} onClick={() => setExtraTab(t.k)}>
-            {t.label}
-          </Chip>
-        ))}
-      </div>
+      {active === 'mine' && <MyCompatibilityPanel />}
+      {active === 'graph' && <RelationGraphPanel />}
+      {active === 'timeline' && <InterestTimelinePanel />}
+      {active === 'alignment' && <IdentityAlignmentPanel />}
 
-      {extraTab === 'mine' && <MyCompatibilityPanel />}
-      {extraTab === 'graph' && <RelationGraphPanel />}
-      {extraTab === 'timeline' && <InterestTimelinePanel />}
-      {extraTab === 'alignment' && <IdentityAlignmentPanel />}
-
-      {direction === 'forward' ? (
+      {active === 'forward' ? (
         /* ---------------- 正向：人 → 兴趣（人物兴趣画像） ---------------- */
         <section className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
           <Card className="h-fit">
@@ -115,7 +88,7 @@ export default function SocialPage() {
                     type="button"
                     data-person={p.personId}
                     onClick={() => setPersonId(p.personId)}
-                    className={cn('flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-jade-500/[0.06]', personId === p.personId && 'bg-jade-500/[0.08] ring-1 ring-jade-500/20')}
+                    className={cn('flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-jade-500/[0.06]', selectedPerson === p.personId && 'bg-jade-500/[0.08] ring-1 ring-jade-500/20')}
                   >
                     <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-jade-500/12 text-xs font-semibold text-jade-700">{p.name.slice(0, 1)}</span>
                     <span className="min-w-0 flex-1">
@@ -129,27 +102,30 @@ export default function SocialPage() {
               {!people.length && <li className="mp-meta px-3 py-3">尚未采集到成员数据</li>}
             </ul>
           </Card>
-          <PersonProfilePanel personId={personId} />
+          <PersonProfilePanel personId={selectedPerson} />
         </section>
-      ) : (
+      ) : active === 'reverse' ? (
         /* ---------------- 反向：兴趣 → 人（找搭子） ---------------- */
         <InterestToPeoplePanel />
-      )}
+      ) : null}
 
       {/* 两人配对（REQ-062） */}
+      {active === 'pair' && (
       <Card>
         <CardHeader title="两人配对" icon={HeartHandshake} subtitle="共同爱好 + 契合度 + 逐维度差值（雷达叠加对比）" />
         <div className="space-y-3 px-4 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
-            <PersonSelect label="A" value={pairA} onChange={setPairA} options={people} />
+            <PersonSelect label="A" value={selectedA} onChange={setPairA} options={people} />
             <span className="text-ink-300">×</span>
-            <PersonSelect label="B" value={pairB} onChange={setPairB} options={people} />
+            <PersonSelect label="B" value={selectedB} onChange={setPairB} options={people} />
           </div>
-          <PairMatchPanel aId={pairA} bId={pairB} />
+          <PairMatchPanel aId={selectedA} bId={selectedB} />
         </div>
       </Card>
+      )}
 
-      {/* 评分卡（REQ-068、REQ-078） */}
+      {/* 评分卡（REQ-068、REQ-078）：只在按兴趣找人时展示，避免所有视图都堆满信息 */}
+      {(active === 'reverse' || active === 'pair') && (
       <section>
         <SectionHeading title="兴趣评分卡" hint="兴趣热度分 = 该爱好下的人的活跃 / 投入程度；兴趣置信度 = 某人在这项爱好上有多可信" />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -167,7 +143,7 @@ export default function SocialPage() {
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
                 {c.perPerson.slice(0, 5).map((p) => (
-                  <button key={p.personId} type="button" onClick={() => { setPersonId(p.personId); setDirection('forward'); }} className="mp-chip !py-0.5 !text-[11px]" title={`置信度 ${p.confidence}`}>
+                  <button key={p.personId} type="button" onClick={() => { setPersonId(p.personId); navigate('/social/forward'); }} className="mp-chip !py-0.5 !text-[11px]" title={`置信度 ${p.confidence}`}>
                     {p.name}
                   </button>
                 ))}
@@ -177,6 +153,7 @@ export default function SocialPage() {
           ))}
         </div>
       </section>
+      )}
 
       {/* 边界声明 */}
       <NoticeBar tone="sky" className="leading-relaxed">
