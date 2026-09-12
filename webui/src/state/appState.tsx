@@ -13,10 +13,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api } from '@/api';
 import type { GlobalFilter, Group, ModuleKey, UpdateStatus } from '@/types';
 
+/** 身份视角：`global` = 不限（默认）；`me` = 只看与「我」相关的数据（REQ-006）。 */
+export type IdentityMode = 'global' | 'me';
+
 export interface AppState {
   /** 全局筛选条件：三个模块共用同一份 */
   filter: GlobalFilter;
   setFilter: (patch: Partial<GlobalFilter>) => void;
+  /** 身份视角开关（REQ-006）：「我相关」/ 全局（不限） */
+  identityMode: IdentityMode;
+  setIdentityMode: (mode: IdentityMode) => void;
   /** 一键清除筛选（空态时使用 —— REQ-016） */
   clearFilter: () => void;
   /** 关键词匹配对象说明（随模块变化 —— REQ-005） */
@@ -53,6 +59,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<{ start?: string; end?: string }>({});
   const [keyword, setKeyword] = useState('');
+  const [identityMode, setIdentityMode] = useState<IdentityMode>('global');
   const [groups, setGroups] = useState<Group[]>([]);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -95,11 +102,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       groupIds,
       timeRange,
       keyword,
-      /* 身份：取自 API-002 下发的 Me 标识（REQ-006；界面不提供手工设置）。 */
-      meId: status?.meId ?? undefined,
+      /* 身份：值为 API-002 下发的 Me 标识（REQ-006；界面不提供手工输入）；视角可选「全局 / 我」。 */
+      meId: identityMode === 'me' ? status?.meId ?? undefined : undefined,
       module,
     }),
-    [groupIds, timeRange, keyword, module, status?.meId],
+    [groupIds, timeRange, keyword, module, identityMode, status?.meId],
   );
 
   const setFilter = useCallback((patch: Partial<GlobalFilter>) => {
@@ -112,6 +119,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setGroupIds([]);
     setTimeRange({});
     setKeyword('');
+    setIdentityMode('global');
   }, []);
 
   const setModule = useCallback((m: ModuleKey) => setModuleKey(m), []);
@@ -156,6 +164,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const value: AppState = {
     filter,
     setFilter,
+    identityMode,
+    setIdentityMode,
     clearFilter,
     setModule,
     groups,

@@ -5,7 +5,7 @@
  * 一行控件，统一作用于三个模块的所有视图；各模块不得自建同类筛选控件（REQ-049）。
  * · 关键词的匹配对象随所在模块变化（REQ-005），因此在控件上直接标注。
  * · 身份取自 wechat-cli 的 Me 标识、无需手工设置（REQ-006）：
- *   界面只展示身份与「我相关」视角开关，不提供手工输入。
+ *   值不提供手工输入；视角开关可切「我（我相关）/ 全局」，默认全局。
  */
 import { useEffect, useRef, useState } from 'react';
 import { CalendarRange, Check, ChevronDown, Layers, Play, Search, UserRound, X } from 'lucide-react';
@@ -16,18 +16,21 @@ import { KEYWORD_SCOPE } from '@/types';
 import { Badge, Chip } from '@/components/ui';
 
 export function GlobalFilterBar({ meName }: { meName?: string }) {
-  const { filter, setFilter, clearFilter, groups, setModule } = useAppState();
+  const { filter, setFilter, clearFilter, groups, setModule, identityMode, setIdentityMode, status } = useAppState();
   const [openGroups, setOpenGroups] = useState(false);
   const [openTime, setOpenTime] = useState(false);
+  const [openIdentity, setOpenIdentity] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeMsg, setAnalyzeMsg] = useState<string | null>(null);
   const groupRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef<HTMLDivElement>(null);
+  const identityRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (groupRef.current && !groupRef.current.contains(e.target as Node)) setOpenGroups(false);
       if (timeRef.current && !timeRef.current.contains(e.target as Node)) setOpenTime(false);
+      if (identityRef.current && !identityRef.current.contains(e.target as Node)) setOpenIdentity(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -35,7 +38,10 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
 
   const groupLabel = filter.groupIds.length === 0 ? '全部群' : filter.groupIds.length === 1 ? (groups.find((g) => g.id === filter.groupIds[0])?.name ?? '1 个群') : `已选 ${filter.groupIds.length} 个群`;
   const timeLabel = !filter.timeRange.start && !filter.timeRange.end ? '全部时间' : `${filter.timeRange.start?.slice(5) ?? '最早'} ~ ${filter.timeRange.end?.slice(5) ?? '最新'}`;
-  const hasFilter = filter.groupIds.length > 0 || !!filter.timeRange.start || !!filter.timeRange.end || !!filter.keyword;
+  /* 身份值始终取自 API-002 的 Me 标识（与当前视角开关无关，避免全局模式下误显示「未就绪」） */
+  const meLabel = meName ?? status?.meId ?? '未就绪';
+  const identityLabel = identityMode === 'me' ? `我：${meLabel}` : '身份：全局';
+  const hasFilter = filter.groupIds.length > 0 || !!filter.timeRange.start || !!filter.timeRange.end || !!filter.keyword || identityMode === 'me';
 
   const toggleGroup = (id: string) => setFilter({ groupIds: filter.groupIds.includes(id) ? filter.groupIds.filter((x) => x !== id) : [...filter.groupIds, id] });
 
@@ -179,11 +185,58 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         )}
       </div>
 
-      {/* 身份（REQ-006：取自 Me 标识，不提供手工设置） */}
-      <span className="inline-flex items-center gap-1.5 rounded-xl border border-ink-900/[0.08] bg-white/80 px-2.5 py-1.5 text-xs text-ink-600" title="身份取自 wechat-cli 的 Me 标识，无需手工设置">
-        <UserRound size={13} className="text-jade-600" />
-        我：{meName ?? (filter.meId ? filter.meId : '未就绪')}
-      </span>
+      {/* 身份（REQ-006：值取自 Me 标识、不提供手工输入；视角可切「我相关 / 全局」，默认全局） */}
+      <div className="relative" ref={identityRef}>
+        <button
+          type="button"
+          data-testid="filter-identity"
+          onClick={() => setOpenIdentity((o) => !o)}
+          className={cn('flex items-center gap-2 rounded-xl border border-ink-900/[0.08] bg-white/80 px-3 py-1.5 text-xs font-medium text-ink-700 transition-colors hover:border-jade-500/40', openIdentity && 'border-jade-500/50 ring-2 ring-jade-500/15')}
+          title="身份值取自 wechat-cli 的 Me 标识，无需手工输入；可切换「我相关」或全局视角"
+        >
+          <UserRound size={13} className="text-jade-600" />
+          <span className="max-w-[150px] truncate">{identityLabel}</span>
+          <ChevronDown size={12} className={cn('text-ink-400 transition-transform', openIdentity && 'rotate-180')} />
+        </button>
+        {openIdentity && (
+          <div className="absolute left-0 top-[calc(100%+6px)] z-40 w-[min(250px,calc(100vw-2rem))] animate-fade-up overflow-hidden rounded-2xl border border-ink-900/[0.08] bg-white shadow-card-hover">
+            <div className="border-b border-ink-900/[0.06] px-3 py-2">
+              <span className="mp-meta">身份视角 · 值来自 Me 标识</span>
+            </div>
+            <ul className="py-1">
+              {(
+                [
+                  { k: 'global' as const, label: '全局（不限）', hint: '不按身份过滤，查看所有数据' },
+                  { k: 'me' as const, label: `我：${meLabel}`, hint: '只看与我相关的梗与数据' },
+                ]
+              ).map((opt) => {
+                const on = identityMode === opt.k;
+                return (
+                  <li key={opt.k}>
+                    <button
+                      type="button"
+                      data-identity-option={opt.k}
+                      onClick={() => {
+                        setIdentityMode(opt.k);
+                        setOpenIdentity(false);
+                      }}
+                      className={cn('flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-jade-500/[0.06]', on && 'bg-jade-500/[0.08]')}
+                    >
+                      <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors', on ? 'border-jade-600 bg-jade-600 text-white' : 'border-ink-300')}>
+                        {on && <Check size={11} strokeWidth={3} />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] text-ink-700">{opt.label}</span>
+                        <span className="mp-meta block truncate">{opt.hint}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+      </div>
 
       {/* 按需分析（非契约入口）；作用范围 = 当前筛选的群 */}
       <button
