@@ -89,7 +89,7 @@ export function LifecycleHeatmap({
         borderWidth: 0,
         textStyle: { color: '#fff', fontSize: 12 },
         formatter: (p: unknown) => {
-          const d = p as { value: [number, number, number, string] };
+          const d = p as { value: [number, number, number] };
           const [mi, ri, count] = d.value;
           const row = shown[ri];
           if (!row) return '';
@@ -127,12 +127,15 @@ export function LifecycleHeatmap({
       series: [
         {
           type: 'heatmap',
+          /**
+           * ⚠️ value 必须是**三元组** [x 索引, y 索引, 数值]。
+           * 早前把它写成四元组 [x, y, 次数, 梗名]（想把梗名带进 tooltip）：
+           * ECharts 不报错，但会把所有数据退化到同一行绘制 —— 表现为
+           * 「只有最下面一行有格子、其余全是空白，且颜色几乎没有渐变」。
+           * 梗名改由 tooltip 的 formatter 用 y 索引反查（见上），不放数据里。
+           */
           data: shown.flatMap((r, ri) =>
-            r.monthlyIntensity.map((m) => ({
-              value: [months.indexOf(m.month), ri, m.count, r.name],
-              // 无数据的月份留白，避免误读成「强度为 0」
-              itemStyle: m.count === 0 ? { color: 'rgba(11,15,23,0.03)' } : undefined,
-            })),
+            r.monthlyIntensity.map((m) => [months.indexOf(m.month), ri, m.count] as [number, number, number]),
           ),
           label: { show: true, fontSize: 10, color: '#fff', formatter: (p: unknown) => String((p as { value: [number, number, number] }).value[2] || '') },
           itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 },
@@ -149,7 +152,7 @@ export function LifecycleHeatmap({
       onPick
         ? {
             click: (p: unknown) => {
-              const d = p as { value: [number, number, number, string] };
+              const d = p as { value: [number, number, number] };
               const row = shown[d.value?.[1] ?? -1];
               if (row) onPick(row.memeId);
             },
