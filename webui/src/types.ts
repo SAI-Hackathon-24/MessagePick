@@ -590,7 +590,12 @@ export const INTEREST_CATEGORY_LABEL: Record<InterestCategory, string> = {
   art: '艺术',
   game: '游戏',
   entertainment: '娱乐',
-  social: '社交',
+  /**
+   * 第五类在**界面上的名称**是「活跃度」（按提出者裁定：仅改名称，数据口径不变）。
+   * 契约层（DM-013）仍定义为「社交」，分类与 categoryScores 均照常存在，
+   * 因此这里只改展示标签，字段名不动。
+   */
+  social: '活跃度',
 };
 
 export const INTEREST_CATEGORIES: InterestCategory[] = ['sports', 'art', 'game', 'entertainment', 'social'];

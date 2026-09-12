@@ -66,11 +66,16 @@ export function LifecycleHeatmap({
   onPick,
 }: {
   rows: LifecycleRow[];
-  /** 当月领跑梗（用于横轴下方的注解） */
+  /**
+   * 当月领跑梗。**不在图内绘制**：原先用 ECharts 的 graphic 组件画在横轴下方，
+   * 该组件一旦未注册或配置异常会让整张热力图静默不绘制（表现为「格子空白」）。
+   * 现改为由调用方用 HTML 渲染，图表只负责画格子。
+   */
   leaders?: { month: string; name: string }[];
   height?: number;
   onPick?: (memeId: string) => void;
 }) {
+  void leaders;
   const months = useMemo(() => [...new Set(rows.flatMap((r) => r.monthlyIntensity.map((m) => m.month)))].sort(), [rows]);
   /** 只展示活跃天数最长的若干梗，避免纵轴过长；其余通过表格视图查看 */
   const shown = useMemo(() => [...rows].sort((a, b) => b.activeDays - a.activeDays).slice(0, 12), [rows]);
@@ -88,15 +93,11 @@ export function LifecycleHeatmap({
           const [mi, ri, count] = d.value;
           const row = shown[ri];
           if (!row) return '';
-          const isFirst = row.firstSeenAt.slice(0, 7) === months[mi];
-          const isPeak = row.peakAt.slice(0, 7) === months[mi];
-          const isSilent = row.silentAt.slice(0, 7) === months[mi];
           return [
             `<b>${row.name}</b>`,
             `${months[mi]}：出现 <b>${count}</b> 次`,
             `首现 ${row.firstSeenAt.slice(0, 10)}　峰值 ${row.peakAt.slice(0, 10)}　沉寂 ${row.silentAt.slice(0, 10)}`,
             `活跃 ${row.activeDays} 天`,
-            [isFirst ? '◀ 首现月' : '', isPeak ? '● 峰值月' : '', isSilent ? '▶ 沉寂月' : ''].filter(Boolean).join('　'),
           ].join('<br/>');
         },
       },
@@ -105,7 +106,6 @@ export function LifecycleHeatmap({
         data: months.map((m) => m.slice(2)),
         axisLabel: { fontSize: 10, color: '#77839a' },
         axisLine: { lineStyle: { color: 'rgba(11,15,23,0.1)' } },
-        splitArea: { show: false },
       },
       yAxis: {
         type: 'category',
@@ -114,10 +114,15 @@ export function LifecycleHeatmap({
         axisLine: { lineStyle: { color: 'rgba(11,15,23,0.1)' } },
       },
       visualMap: {
+        /**
+         * ⚠️ min/max 必须覆盖**真实次数**的取值范围。
+         * 早前写成 0–1（当成强度比例），而格子里是当月次数（3~14）：
+         * 超出范围的值不会被赋予颜色，会直接渲染成透明。
+         */
         min: 0,
-        max: 1,
+        max: Math.max(...shown.flatMap((r) => r.monthlyIntensity.map((m) => m.count)), 1),
         show: false,
-        inRange: { color: ['#f2f7f4', '#b0e9cb', '#45bd87', '#059a4d', '#f59e0b'] },
+        inRange: { color: ['#eef7f1', '#0b5c33'] },
       },
       series: [
         {
@@ -134,21 +139,9 @@ export function LifecycleHeatmap({
           emphasis: { itemStyle: { borderColor: '#2b3242', borderWidth: 2 } },
         },
       ],
-      ...(leaders && leaders.length
-        ? {
-            graphic: months.map((m, i) => {
-              const lead = leaders.find((l) => l.month === m);
-              return {
-                type: 'text',
-                left: `${((i + 0.5) / months.length) * 100}%`,
-                bottom: 4,
-                style: { text: lead ? `▲${lead.name}` : '', fontSize: 10, fill: '#77839a', align: 'center' },
-              };
-            }),
-          }
-        : {}),
     }),
-    [shown, months, leaders],
+    // leaders 由调用方用 HTML 渲染（不放进 option，避免依赖 graphic 组件）
+    [shown, months],
   );
 
   const onEvents = useMemo(

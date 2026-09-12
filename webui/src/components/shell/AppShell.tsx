@@ -29,7 +29,7 @@ function pageTitle(pathname: string): string {
       return child ? `${g.label} · ${child.label}` : g.label;
     }
   }
-  return '总览';
+  return '总览 · 今日群聊体检';
 }
 
 export function AppShell() {

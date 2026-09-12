@@ -16,6 +16,7 @@ import { AlarmClock, Check, CheckCheck, Clock, EyeOff, ListFilter, MessageSquare
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
+import { cn } from '@/lib/cn';
 import { deadlineHint, fmtDayLabel, fmtMD, num } from '@/lib/format';
 import {
   EXTRACT_TYPE_LABEL,
@@ -25,6 +26,7 @@ import {
   type ExtractItem,
   type NoticeDimension,
   type Priority,
+  type TodoState,
 } from '@/types';
 import { Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
@@ -42,12 +44,29 @@ export default function ExtractPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draftSubject, setDraftSubject] = useState('');
+  /**
+   * 动态筛选（用户反馈 6）：点指标卡即筛选当前列表。
+   * 只在**本地对已取回的条目**做视图内筛选，不改动全局筛选条、也不改接口入参。
+   */
+  const [quickFilter, setQuickFilter] = useState<'none' | 'all' | 'pending' | 'high' | 'deadline'>('none');
 
   const timeline = useApi(() => api.extractItems(filter, 1, 50), [JSON.stringify(filter)]);
   const groups = useApi(() => api.noticeGroups(filter, dimension), [JSON.stringify(filter), dimension]);
   const due = useApi(() => api.dueTodos(new Date().toISOString()), []);
 
-  const items = timeline.data?.items ?? [];
+  const allItems = timeline.data?.items ?? [];
+  const items = useMemo(() => {
+    switch (quickFilter) {
+      case 'pending':
+        return allItems.filter((i) => i.todoState === 'pending');
+      case 'high':
+        return allItems.filter((i) => i.priority === 'high');
+      case 'deadline':
+        return allItems.filter((i) => !!i.elements.deadline);
+      default:
+        return allItems;
+    }
+  }, [allItems, quickFilter]);
   const grouped = useMemo(() => {
     const map = new Map<string, ExtractItem[]>();
     [...items].sort((a, b) => b.sentAt.localeCompare(a.sentAt)).forEach((it) => {
@@ -58,11 +77,11 @@ export default function ExtractPage() {
   }, [items]);
 
   const stats = useMemo(() => {
-    const pending = items.filter((i) => i.todoState === 'pending').length;
-    const high = items.filter((i) => i.priority === 'high').length;
-    const withDdl = items.filter((i) => i.elements.deadline).length;
+    const pending = allItems.filter((i) => i.todoState === 'pending').length;
+    const high = allItems.filter((i) => i.priority === 'high').length;
+    const withDdl = allItems.filter((i) => i.elements.deadline).length;
     return { pending, high, withDdl };
-  }, [items]);
+  }, [allItems]);
 
   const saveSubject = async (id: string) => {
     if (!draftSubject.trim()) return setEditing(null);
@@ -79,7 +98,7 @@ export default function ExtractPage() {
     }
   };
 
-  const markTodo = async (id: string, state: 'done' | 'ignored') => {
+  const markTodo = async (id: string, state: TodoState) => {
     const res = await api.markTodo(id, state);
     if (res.ok) {
       timeline.refetch();
@@ -92,10 +111,25 @@ export default function ExtractPage() {
     <div className="space-y-5">
       {pageView !== 'todo' && (
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="提取条目" value={num(timeline.data?.total ?? 0)} unit="条" hint="按时间排序供消息时间轴使用" icon={MessageSquareText} />
-        <Stat label="待处理" value={stats.pending} unit="条" hint="未处理状态；支持完成 / 忽略" icon={CheckCheck} tone="amber" />
-        <Stat label="优先级高" value={stats.high} unit="条" hint="优先级由 AI 判定、用户可改" icon={ListFilter} tone="coral" />
-        <Stat label="带 DDL" value={stats.withDdl} unit="条" hint="到期前 1 天在应用内提醒" icon={AlarmClock} tone="ink" />
+        {/* 四张卡都可点：点一下只看该类条目，再点取消（用户反馈 6） */}
+        {(
+          [
+            { key: 'all' as const, label: '提取条目', value: num(timeline.data?.total ?? 0), unit: '条', hint: '点一下只看全部条目', icon: MessageSquareText, tone: 'jade' as const },
+            { key: 'pending' as const, label: '待处理', value: stats.pending, unit: '条', hint: '点一下只看未处理的', icon: CheckCheck, tone: 'amber' as const },
+            { key: 'high' as const, label: '优先级高', value: stats.high, unit: '条', hint: '点一下只看优先级高的', icon: ListFilter, tone: 'coral' as const },
+            { key: 'deadline' as const, label: '带 DDL', value: stats.withDdl, unit: '条', hint: '点一下只看带截止日期的', icon: AlarmClock, tone: 'ink' as const },
+          ]
+        ).map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            data-testid={`stat-${c.key}`}
+            onClick={() => setQuickFilter((prev) => (prev === c.key ? 'none' : c.key))}
+            className={cn('rounded-2xl text-left transition-all', quickFilter === c.key && 'ring-2 ring-jade-500/40')}
+          >
+            <Stat label={c.label} value={c.value} unit={c.unit} hint={c.hint} icon={c.icon} tone={c.tone} />
+          </button>
+        ))}
       </section>
       )}
 
@@ -126,6 +160,21 @@ export default function ExtractPage() {
           <Clock size={11} /> 群多选取自全局筛选条
         </span>
       </Card>
+      )}
+
+      {quickFilter !== 'none' && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-jade-500/25 bg-jade-500/[0.07] px-3.5 py-2 text-xs text-jade-800">
+          <span>
+            已筛选：
+            <strong>
+              {{ all: '全部条目', pending: '未处理的条目', high: '优先级高的条目', deadline: '带 DDL 的条目' }[quickFilter]}
+            </strong>
+            （{items.length} 条）
+          </span>
+          <button type="button" onClick={() => setQuickFilter('none')} data-testid="clear-quick-filter" className="rounded-md px-2 py-0.5 text-[11px] hover:bg-jade-500/15">
+            取消筛选
+          </button>
+        </div>
       )}
 
       {timeline.error && <ErrorState error={timeline.error} onRetry={timeline.refetch} onClearFilter={clearFilter} />}
@@ -207,7 +256,7 @@ export default function ExtractPage() {
                           }}
                           onSaveSubject={() => void saveSubject(it.id)}
                           onPriority={(p) => void changePriority(it.id, p)}
-                          onTodo={(s) => void markTodo(it.id, s)}
+                          onTodoState={(s) => void markTodo(it.id, s)}
                           onOpen={() => setDetailId(it.id)}
                         />
                       </li>
@@ -238,16 +287,7 @@ export default function ExtractPage() {
                       </span>
                       <Badge tone="neutral">{g.items.length}</Badge>
                     </div>
-                    <ul className="space-y-1">
-                      {g.items.slice(0, 4).map((it) => (
-                        <li key={it.id}>
-                          <button type="button" onClick={() => setDetailId(it.id)} className="w-full truncate rounded-lg px-2 py-1.5 text-left text-[11.5px] text-ink-600 transition-colors hover:bg-jade-500/[0.06]">
-                            {it.summaryLine}
-                          </button>
-                        </li>
-                      ))}
-                      {g.items.length > 4 && <li className="mp-meta px-2">…另有 {g.items.length - 4} 条</li>}
-                    </ul>
+                    <NoticeGroupList items={g.items} onOpen={setDetailId} />
                   </div>
                 ))
               )}
@@ -281,7 +321,7 @@ function ExtractCard({
   onStartEdit,
   onSaveSubject,
   onPriority,
-  onTodo,
+  onTodoState,
   onOpen,
 }: {
   item: ExtractItem;
@@ -291,7 +331,7 @@ function ExtractCard({
   onStartEdit: () => void;
   onSaveSubject: () => void;
   onPriority: (p: Priority) => void;
-  onTodo: (s: 'done' | 'ignored') => void;
+  onTodoState: (s: TodoState) => void;
   onOpen: () => void;
 }) {
   const dl = deadlineHint(elements_deadline(item));
@@ -348,18 +388,68 @@ function ExtractCard({
           </Chip>
         ))}
         <span className="mx-1 h-3.5 w-px bg-ink-900/10" />
-        {item.todoState !== 'done' && (
-          <Button size="sm" variant="outline" icon={Check} onClick={() => onTodo('done')}>
-            完成
-          </Button>
-        )}
-        {item.todoState !== 'ignored' && (
-          <Button size="sm" variant="ghost" icon={EyeOff} onClick={() => onTodo('ignored')}>
-            忽略
-          </Button>
-        )}
+        {/* 待办状态是**互斥**的单一状态：用一组单选式按钮，避免「完成」与「忽略」并列被同时点 */}
+        <span className="mp-meta">待办</span>
+        {(
+          [
+            { s: 'pending' as const, label: '未处理', icon: undefined },
+            { s: 'done' as const, label: '完成', icon: Check },
+            { s: 'ignored' as const, label: '忽略', icon: EyeOff },
+          ]
+        ).map(({ s, label, icon: Icon }) => (
+          <button
+            key={s}
+            type="button"
+            data-testid={`todo-${s}-${item.id}`}
+            onClick={() => onTodoState(s)}
+            title={s === 'pending' ? '回到未处理' : s === 'done' ? '这件事已经办掉' : '这件事不需要你处理'}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors',
+              item.todoState === s ? 'border-jade-600 bg-jade-600 text-white' : 'border-ink-900/[0.1] text-ink-500 hover:border-jade-500/40',
+            )}
+          >
+            {Icon && <Icon size={11} />}
+            {label}
+          </button>
+        ))}
       </div>
     </Card>
+  );
+}
+
+/**
+ * 通知总览的分组列表。
+ * 原先写死只显示 4 条并附一句「…另有 N 条」——既看不到剩余内容，
+ * 又让人以为界面被截断了（评审反馈 7）。改为：默认 3 条 + 可展开全部 + 明确的计数。
+ */
+function NoticeGroupList({ items, onOpen }: { items: ExtractItem[]; onOpen: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? items : items.slice(0, 3);
+  return (
+    <>
+      <ul className="space-y-1">
+        {shown.map((it) => (
+          <li key={it.id}>
+            <button
+              type="button"
+              onClick={() => onOpen(it.id)}
+              className="w-full truncate rounded-lg px-2 py-1.5 text-left text-[11.5px] text-ink-600 transition-colors hover:bg-jade-500/[0.06]"
+            >
+              {it.summaryLine}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {items.length > 3 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 w-full rounded-lg px-2 py-1 text-left text-[11px] text-jade-700 transition-colors hover:bg-jade-500/[0.06]"
+        >
+          {expanded ? '收起' : `展开全部 ${items.length} 条`}
+        </button>
+      )}
+    </>
   );
 }
 

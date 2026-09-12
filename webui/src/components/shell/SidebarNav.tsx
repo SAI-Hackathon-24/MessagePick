@@ -9,8 +9,8 @@
  * 不新增任何数据请求口径（数据仍来自各模块既有的 API 调用）。
  */
 import { useEffect, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
-import { ChevronDown, HeartHandshake, MessageSquareText, Sparkles, type LucideIcon } from 'lucide-react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
+import { ChevronDown, HeartHandshake, LayoutDashboard, MessageSquareText, Sparkles, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 export interface NavChild {
@@ -89,17 +89,41 @@ export function SidebarNav({ collapsed, onToggle }: { collapsed: boolean; onTogg
         collapsed ? 'w-[68px]' : 'w-[228px]',
       )}
     >
-      {/* 品牌区 + 折叠开关 */}
-      <div className={cn('flex items-center gap-2.5 px-4 py-4', collapsed && 'justify-center px-2')}>
+      {/* 品牌区：点击回总览（左上角图标即总览入口） */}
+      <Link
+        to="/"
+        data-testid="nav-overview"
+        title="回到总览"
+        className={cn('flex items-center gap-2.5 rounded-xl px-4 py-4 transition-colors hover:bg-jade-500/[0.06]', collapsed && 'justify-center px-2')}
+      >
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-jade-500 to-jade-700 text-white shadow-glow">
           <Sparkles size={17} />
         </span>
         {!collapsed && (
           <div className="min-w-0 leading-tight">
             <div className="truncate text-[13px] font-semibold tracking-wide text-ink-800">聊斋 MessagePick</div>
-            <div className="mp-meta">群聊分析</div>
+            <div className="mp-meta">点击回到总览</div>
           </div>
         )}
+      </Link>
+
+      {/* 总览单独一行，避免「只能靠图标」这一条隐含路径 */}
+      <div className="px-2">
+        <NavLink
+          to="/"
+          end
+          data-testid="nav-overview-row"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition-colors',
+              isActive ? 'bg-jade-500/[0.12] text-jade-800 ring-1 ring-jade-500/25' : 'text-ink-600 hover:bg-ink-900/[0.04]',
+              collapsed && 'justify-center px-0',
+            )
+          }
+        >
+          <LayoutDashboard size={18} className="shrink-0 text-ink-400" />
+          {!collapsed && '总览'}
+        </NavLink>
       </div>
 
       {/* 三个一级入口 */}

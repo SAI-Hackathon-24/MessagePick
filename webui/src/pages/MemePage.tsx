@@ -113,10 +113,27 @@ export default function MemePage() {
 
         <span className="mp-meta">字号口径</span>
         {(Object.keys(FONT_SCALE_LABEL) as FontScaleMode[]).map((k) => (
-          <Chip key={k} active={scale === k} onClick={() => setScale(k)} title="口径可切换（REQ-020 / AC-042）">
+          <Chip
+            key={k}
+            active={scale === k}
+            onClick={() => setScale(k)}
+            title={
+              k === 'window'
+                ? '时间窗取顶部全局筛选条的「时间范围」，模块内不另设时间控件（REQ-020、REQ-049）'
+                : '累计出现次数：不受时间范围影响（REQ-020）'
+            }
+          >
             {FONT_SCALE_LABEL[k]}
           </Chip>
         ))}
+        {/* 选「指定时间窗」时必须让人看见「窗」是哪一段，否则会以为缺一个时间选择器 */}
+        {scale === 'window' && (
+          <span className="mp-meta" data-testid="scale-window-hint">
+            时间窗 = 顶部全局筛选条的范围：
+            <strong>{filter.timeRange.start || '最早'}</strong> ~ <strong>{filter.timeRange.end || '最新'}</strong>
+            （在顶部「全部时间」处修改）
+          </span>
+        )}
 
         <span className="mx-1 h-4 w-px bg-ink-900/10" />
         <span className="mp-meta">布局</span>
@@ -216,14 +233,13 @@ export default function MemePage() {
                   <div className="rounded-xl border border-ink-900/[0.06] bg-white/70 px-3 py-2">
                     <div className="mp-section-title mb-1">颜色含义</div>
                     <div className="flex items-center gap-1.5">
-                      {['#f2f7f4', '#b0e9cb', '#45bd87', '#059a4d', '#f59e0b'].map((c, i) => (
-                        <span key={c} className="flex items-center gap-1">
-                          <span className="h-3 w-4 rounded-sm border border-ink-900/10" style={{ background: c }} />
-                          <span className="mp-meta">{['无', '少', '中', '多', '峰值'][i]}</span>
-                        </span>
-                      ))}
+                      <span className="mp-meta">少</span>
+                      <span className="h-3 w-24 rounded-sm border border-ink-900/10" style={{ background: 'linear-gradient(90deg, #eef7f1, #0b5c33)' }} />
+                      <span className="mp-meta">多</span>
                     </div>
-                    <p className="mp-meta mt-1">按当月次数排序，不是固定阈值。</p>
+                    <p className="mp-meta mt-1 leading-relaxed">
+                      色阶按「当月出现次数」在 0 ~ 本期最大值 之间线性映射；格子里的数字就是当月次数，颜色与数字始终一致。
+                    </p>
                   </div>
                 </div>
 

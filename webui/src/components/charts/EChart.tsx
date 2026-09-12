@@ -28,11 +28,22 @@ async function loadECharts() {
         charts.RadarChart,
         charts.GraphChart,
         charts.ScatterChart,
+        // 梗生命周期视图用热力图。⚠️ 未注册的系列类型 ECharts 不报错、只是不绘制，
+        // 表现为「行名与月份轴都在、格子却是空的」——排查成本极高，务必逐一核对。
+        charts.HeatmapChart,
         components.GridComponent,
         components.TooltipComponent,
         components.LegendComponent,
         components.AriaComponent,
         components.TitleComponent,
+        // 以下是「漏注册会静默变形」的组件，必须显式注册（均已在实践中踩过）：
+        // · VisualMapComponent —— 热力图（梗生命周期）给单元格上色
+        // · GraphicComponent   —— 横轴下方的「当月领跑梗」标注
+        //   漏注册时 ECharts 不报错，但整张图不绘制，表现为
+        //   「行名、月份轴、图例都在，格子却是空的」
+        components.VisualMapComponent,
+        components.GraphicComponent,
+        components.MarkLineComponent,
         renderers.CanvasRenderer,
       ]);
       return core;
@@ -56,6 +67,13 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
   const chartRef = useRef<{ setOption: (o: unknown, notMerge?: boolean) => void; resize: () => void; dispose: () => void; on: (e: string, h: (p: unknown) => void) => void; off: (e: string) => void } | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  /**
+   * 实例创建后置为非 0 值，用于触发「option 重放」。
+   * ⚠️ 此前只在实例创建的那一刻 setOption 一次：若创建时数据尚未到达
+   * （option 还是空数组），后到的数据永远不会被应用 —— 表现为
+   * 「统计数字/行名都在，但图形是空的」，且不报错。
+   */
+  const [instanceSeq, setInstanceSeq] = useState(0);
   /** 实例与 observer 的清理函数（不挂在 DOM 上，避免污染元素类型） */
   const cleanupRef = useRef<(() => void) | null>(null);
 
@@ -105,6 +123,7 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
           const chart = echarts.init(el);
           chartRef.current = chart as unknown as typeof chartRef.current;
           chart.setOption(optionRef.current, true);
+          setInstanceSeq((n) => n + 1); // 通知下面的 effect：实例已就绪，可应用最新 option
         } catch (e) {
           // 不吞异常：配置有问题时要能从控制台看到原因（此前静默失败会表现为「画布空白」）
           console.error('[EChart] 图表配置渲染失败：', e);
@@ -143,8 +162,14 @@ export function EChart({ option, height = 320, className, onEvents, prepare }: E
   }, [ready]);
 
   useEffect(() => {
-    chartRef.current?.setOption(option, true);
-  }, [option]);
+    // instanceSeq 变化 = 实例刚创建（此时必须应用一次），option 变化 = 数据更新
+    if (!chartRef.current) return;
+    try {
+      chartRef.current.setOption(option, true);
+    } catch (e) {
+      console.error('[EChart] 图表配置更新失败：', e);
+    }
+  }, [option, instanceSeq]);
 
   useEffect(() => {
     const chart = chartRef.current;

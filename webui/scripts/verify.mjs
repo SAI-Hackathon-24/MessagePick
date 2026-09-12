@@ -435,12 +435,82 @@ const heat = await ev(`(() => {
   const t = document.querySelector('main')?.innerText || '';
   return {
     hasGuide: /一眼看出/.test(t),
-    hasLegend: /峰值/.test(t) && /无/.test(t),
+    hasLegend: /颜色含义/.test(t) && /少/.test(t) && /多/.test(t) && /当月出现次数/.test(t),
     hasLeader: /当月领跑梗/.test(t),
     canvases: document.querySelectorAll('main canvas').length,
   };
 })()`);
 rec('生命周期', '生命周期改为共享时间轴的热力图并给出读法与图例', heat.hasGuide && heat.hasLegend && heat.hasLeader && heat.canvases > 0, `读法说明=${heat.hasGuide} 图例=${heat.hasLegend} 领跑梗=${heat.hasLeader} canvas=${heat.canvases}`);
+
+// 只查「canvas 是否存在」是不够的：系列未注册时 canvas 仍在、格子却是空的。
+// 这里做像素级校验，确保热力图**真的画出了带颜色的单元格**。
+await sleep(1500);
+const heatPixels = await ev(`(() => {
+  const cv = document.querySelector('main canvas');
+  if (!cv) return { canvas: 0 };
+  const g = cv.getContext('2d');
+  let opaque = 0, colored = 0;
+  try {
+    const d = g.getImageData(0, 0, cv.width, cv.height).data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      opaque++;
+      const r = d[i], gg = d[i + 1], b = d[i + 2];
+      if (!(Math.abs(r - gg) < 12 && Math.abs(gg - b) < 12)) colored++;
+    }
+  } catch (e) { return { canvas: cv.width + 'x' + cv.height, error: String(e).slice(0, 60) }; }
+  return { canvas: cv.width + 'x' + cv.height, opaque, colored };
+})()`);
+rec('生命周期', '热力图实际绘制出带颜色的单元格（防「系列未注册导致画布空白」回归）',
+  (heatPixels.colored ?? 0) > 3000 && (heatPixels.opaque ?? 0) > 20000,
+  `canvas=${heatPixels.canvas} 上色像素=${heatPixels.colored} 不透明像素=${heatPixels.opaque}`);
+
+/* ================================================================== */
+/* 新增：本轮评审的其余修正                                              */
+/* ================================================================== */
+await goto('#/meme/table');
+const overviewNav = await ev(`(() => ({
+  byIcon: !!document.querySelector('[data-testid="nav-overview"]'),
+  byRow: !!document.querySelector('[data-testid="nav-overview-row"]'),
+}))()`);
+rec('总览入口', '左上角图标与侧栏均可回到总览', overviewNav.byIcon && overviewNav.byRow, `图标=${overviewNav.byIcon} 侧栏行=${overviewNav.byRow}`);
+
+await goto('#/meme/cloud');
+await sleep(900);
+const windowHint = await ev(`(() => {
+  const chips = [...document.querySelectorAll('button')].filter(b => /指定时间窗内出现频次/.test(b.textContent || ''));
+  if (!chips.length) return { ok: false };
+  chips[0].click();
+  return { ok: true };
+})()`);
+await sleep(800);
+const hintText = await ev(`(() => { const el = document.querySelector('[data-testid="scale-window-hint"]'); return el ? el.innerText.replace(/\s+/g, ' ') : null; })()`);
+rec('字号口径', '切到「指定时间窗」时明确展示时间窗来源（取自全局筛选条）', windowHint.ok && !!hintText, hintText ? hintText.slice(0, 60) : '未出现提示');
+
+await goto('#/extract/timeline');
+await sleep(1500);
+const quick = await ev(`(() => {
+  const b = document.querySelector('[data-testid="stat-pending"]');
+  if (!b) return { ok: false };
+  b.click();
+  return { ok: true };
+})()`);
+await sleep(900);
+const quickState = await ev(`(() => {
+  const t = document.querySelector('main')?.innerText || '';
+  const clear = !!document.querySelector('[data-testid="clear-quick-filter"]');
+  const m = t.match(/已筛选：[\s\S]{0,40}/);
+  return { hasBanner: /已筛选/.test(t), clearBtn: clear, banner: m ? m[0].slice(0, 44) : null };
+})()`);
+rec('动态筛选', '点指标卡可筛选列表，并可一键取消', quick.ok && quickState.hasBanner && quickState.clearBtn, quickState.banner ?? '未出现筛选条');
+
+const todoSingle = await ev(`(() => {
+  const btns = [...document.querySelectorAll('[data-testid^="todo-"]')];
+  return { count: btns.length, labels: btns.slice(0, 3).map(b => (b.textContent || '').trim()) };
+})()`);
+rec('待办状态', '待办改为互斥的单一状态选择（未处理 / 完成 / 忽略），不再并列可同点',
+  todoSingle.count >= 3 && todoSingle.labels.includes('未处理') && todoSingle.labels.includes('完成') && todoSingle.labels.includes('忽略'),
+  `按钮=${todoSingle.count} 标签=${todoSingle.labels.join('/')}`);
 
 /* ================================================================== */
 /* 新增：未知名单唯一性（图谱重复节点的根因）                            */
