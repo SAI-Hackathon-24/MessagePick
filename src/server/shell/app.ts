@@ -57,6 +57,7 @@ import {
 import type {
   Api001Request,
   DeletionScope,
+  EntityRecord,
   EntityType,
   ErrorEnvelope,
   Id,
@@ -807,6 +808,39 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
+  // 人的名单（非契约接口；社交页成员列表 / 统计 / 配对的默认值。
+  // 必须注册在 `/api/people/:memberId` 之前，否则会被路径参数路由吞掉。）
+  app.get(
+    '/api/people/roster',
+    handle('people:roster', (req, res) => {
+      res.json(success(metaOf(req), { people: rosterOf() }))
+    }),
+  )
+
+  // 人-人关系图谱（非契约接口；REQ-069 展示）
+  app.get(
+    '/api/social/graph',
+    handle('social:graph', (req, res) => {
+      res.json(success(metaOf(req), buildRelationGraph()))
+    }),
+  )
+
+  // 兴趣评分卡（非契约接口；REQ-068 / REQ-078 展示）
+  app.get(
+    '/api/interests/score-cards',
+    handle('interests:score-cards', (req, res) => {
+      res.json(success(metaOf(req), { cards: buildScoreCards() }))
+    }),
+  )
+
+  // 兴趣事件流（非契约接口；REQ-067 展示）
+  app.get(
+    '/api/interests/event-streams',
+    handle('interests:event-streams', (req, res) => {
+      res.json(success(metaOf(req), { streams: buildEventStreams() }))
+    }),
+  )
+
   // API-021 查询兴趣 → 人（直通；entry = 按一级维度 / 按二级标签）
   app.get(
     '/api/people',
@@ -930,6 +964,144 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
+  // -------------------------------------------------------------------------
+  // 展示组装辅助（非契约接口用；只读存储、不改任何模块输出；
+  // 页面在 MOD-007 自己的视图落盘前的临时数据面 —— 全部为「等值透传 + 连接」）
+  // -------------------------------------------------------------------------
+
+  /** 分页读全量记录（页大小 1000；保险上限 200 页防呆）。 */
+  function readAll<T extends EntityType>(type: T): EntityRecord<T>[] {
+    const all: EntityRecord<T>[] = []
+    for (let page = 1; page <= 200; page += 1) {
+      const result = store.read(type, null, { page, pageSize: 1_000 })
+      all.push(...result.records)
+      if (result.records.length === 0 || all.length >= result.pageInfo.total) break
+    }
+    return all
+  }
+
+  /** 人的名单条目：personId → 展示名（取该人的任一成员昵称）、isMe / unknown / activity。 */
+  interface RosterEntry {
+    personId: Id
+    name: string
+    isMe: boolean
+    unknown: boolean
+    activity: number
+  }
+
+  /** 展示名清洗：去掉控制字符（微信昵称可能带 \u007f 等占位符）。 */
+  const cleanName = (value: string): string => value.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+
+  function rosterOf(): RosterEntry[] {
+    // 每个人挑一个展示名：优先非空（清洗后），其次优先「我」
+    const bestOf = new Map<string, { name: string; score: number }>()
+    for (const member of readAll('DM-004')) {
+      const name = cleanName(member.displayName)
+      const score = (name.length > 0 ? 2 : 0) + (member.isMe === true ? 1 : 0)
+      const prev = bestOf.get(member.personId)
+      if (prev === undefined || score > prev.score) bestOf.set(member.personId, { name, score })
+    }
+    return readAll('DM-011')
+      .map((person) => {
+        const best = bestOf.get(person.personId)
+        return {
+          personId: person.personId,
+          name: best !== undefined && best.name.length > 0 ? best.name : person.personId,
+          isMe: person.isMe,
+          unknown: person.unknown,
+          activity: person.activity,
+        }
+      })
+      .sort((a, b) => Number(b.isMe) - Number(a.isMe) || Number(a.unknown) - Number(b.unknown) || a.name.localeCompare(b.name, 'zh'))
+  }
+
+  /** 人-人关系图谱：节点 = 人（全部列出，未知者零连线）；连线 = 共同兴趣标签（REQ-069 展示口径）。 */
+  function buildRelationGraph() {
+    const nodes = rosterOf()
+    const tagNames = new Map(readAll('DM-013').map((tag) => [tag.tagId, tag.name]))
+    const holders = new Map<string, string[]>()
+    for (const link of readAll('DM-014')) {
+      const list = holders.get(link.tagId) ?? []
+      if (list.length < 30) list.push(link.personId)
+      holders.set(link.tagId, list)
+    }
+    const shared = new Map<string, string[]>()
+    let stop = false
+    for (const [tagId, list] of holders) {
+      if (stop) break
+      for (let i = 0; i < list.length; i += 1) {
+        for (let j = i + 1; j < list.length; j += 1) {
+          const key = list[i] < list[j] ? `${list[i]}\u0000${list[j]}` : `${list[j]}\u0000${list[i]}`
+          const tags = shared.get(key) ?? []
+          tags.push(tagId)
+          shared.set(key, tags)
+          if (shared.size > 20_000) {
+            stop = true
+            break
+          }
+        }
+        if (stop) break
+      }
+    }
+    const links = [...shared.entries()]
+      .map(([key, tagIds]) => {
+        const [source, target] = key.split('\u0000')
+        return {
+          source,
+          target,
+          sharedCount: tagIds.length,
+          sharedInterests: tagIds.slice(0, 3).map((tagId) => tagNames.get(tagId) ?? tagId),
+        }
+      })
+      .sort((a, b) => b.sharedCount - a.sharedCount)
+      .slice(0, 3_000)
+    return { nodes, links }
+  }
+
+  /** 兴趣评分卡：标签热度（DM-013）+ 逐人置信度（DM-014），按热度降序取前 60 张。 */
+  function buildScoreCards() {
+    const nameByPerson = new Map(rosterOf().map((person) => [person.personId, person.name]))
+    const holdersByTag = new Map<string, { personId: string; confidence: number }[]>()
+    for (const link of readAll('DM-014')) {
+      const list = holdersByTag.get(link.tagId) ?? []
+      list.push({ personId: link.personId, confidence: link.confidence })
+      holdersByTag.set(link.tagId, list)
+    }
+    return readAll('DM-013')
+      .map((tag) => {
+        const holders = (holdersByTag.get(tag.tagId) ?? []).slice().sort((a, b) => b.confidence - a.confidence)
+        return {
+          tagId: tag.tagId,
+          name: tag.name,
+          dimension: tag.dimension,
+          heat: tag.heatScore,
+          peopleCount: holders.length,
+          perPerson: holders.slice(0, 50).map((holder) => ({
+            personId: holder.personId,
+            name: nameByPerson.get(holder.personId) ?? holder.personId,
+            confidence: holder.confidence,
+          })),
+        }
+      })
+      .sort((a, b) => b.heat - a.heat || b.peopleCount - a.peopleCount)
+      .slice(0, 60)
+  }
+
+  /** 兴趣事件流：标签首现时间 + 事件点（仅可视化，不参与权重 —— REQ-087）。 */
+  function buildEventStreams() {
+    return readAll('DM-013')
+      .filter((tag) => tag.eventStream.length > 0)
+      .sort((a, b) => a.firstSeenAt - b.firstSeenAt)
+      .slice(0, 80)
+      .map((tag) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+        dimension: tag.dimension,
+        firstSeenAt: tag.firstSeenAt,
+        events: tag.eventStream.map((point) => ({ at: point.at, intensity: point.strength })),
+      }))
+  }
+
   // 群成员目录（非契约接口；页面把成员标识映射为昵称 —— 详情发送者 / 兴趣提示 / 梗王 / 身份对齐）
   app.get(
     '/api/members',
@@ -937,8 +1109,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       const scope = 'members'
       const ids = queryIdList(req, 'ids', scope)
       const wanted = new Set(ids)
-      const result = store.read('DM-004', null, { page: 1, pageSize: 1000 })
-      res.json(success(metaOf(req), { members: result.records.filter((member) => wanted.has(member.memberId)) }))
+      res.json(success(metaOf(req), { members: readAll('DM-004').filter((member) => wanted.has(member.memberId)) }))
     }),
   )
 
@@ -1023,6 +1194,47 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }
   })
 
+  /**
+   * 采集收尾后的后台预热（模块四 §4.5）：梗分析批次 + 信息提取。
+   * 不阻塞采集响应；缺块判定在模块内，重复触发安全。
+   */
+  async function runWarmup(): Promise<void> {
+    const memeOp = tracker.start({ kind: 'warmup', scope: '梗分析' })
+    const extractOp = tracker.start({ kind: 'warmup', scope: '信息提取' })
+    const memeRun = (async () => {
+      try {
+        const handle = meme.startBatch('ingestDone')
+        tracker.update(memeOp, { state: 'running' })
+        const result = await handle.done
+        const done = result.items.filter((item) => item.status === 'succeeded').length
+        tracker.update(memeOp, {
+          state: result.status === 'succeeded' ? 'succeeded' : result.status === 'failed' && done === 0 ? 'failed' : 'partial',
+          counts: { done, total: result.items.length },
+          ...(result.error === undefined ? {} : { error: result.error }),
+        })
+      } catch (error) {
+        tracker.update(memeOp, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:meme') })
+      }
+    })()
+    const extractRun = (async () => {
+      try {
+        tracker.update(extractOp, { state: 'running' })
+        const result = await extract.run()
+        tracker.update(extractOp, {
+          state: result.status,
+          counts: { done: result.counts.written, total: result.counts.extracted },
+          ...(result.status !== 'succeeded' && result.failures.length > 0
+            ? { error: envelopeOfUnknown(new Error(`信息提取有 ${result.failures.length} 个失败分片`), 'warmup:extract') }
+            : {}),
+        })
+        if (result.failures.length > 0) logger.warn('warmup.extract.failures', { count: result.failures.length })
+      } catch (error) {
+        tracker.update(extractOp, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:extract') })
+      }
+    })()
+    await Promise.all([memeRun, extractRun])
+  }
+
   async function runIngest(req: Request, res: Response, request: Api001Request): Promise<void> {
     const scope: string = request.targetSource ?? '全部来源'
     const id = tracker.start({ kind: 'ingest', scope })
@@ -1049,6 +1261,13 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
           res.json(success(metaOf(req), outcome.data))
         } else {
           respondFailure(req, res, outcome.error, 'update')
+        }
+        // 后台预热（模块四 §4.5）：群消息采集成功即触发；不等待、不阻塞响应
+        if (
+          config.ingest.autoTriggerAfterIngest &&
+          outcome.report.sources.some((source) => source.source === '群消息' && source.status === 'succeeded')
+        ) {
+          void runWarmup()
         }
       } catch (error) {
         tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'update') })
