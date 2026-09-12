@@ -22,7 +22,7 @@
 >
 > **想直接跑起来？看 [`docs/USAGE.md`](docs/USAGE.md)**（安装 → 采集 → 选群 → 分析 → 看结果）。
 
-> **（注：除当前仓库代码外，还需要前置wechat-cli，安装链接https://github.com/SAI-Hackathon-24/wechat-cli）
+> **（注：除当前仓库代码外，还需要前置wechat-cli，链接https://github.com/SAI-Hackathon-24/wechat-cli，并依照其中描述安装该包）
 ---
 
 ## 三大核心功能
