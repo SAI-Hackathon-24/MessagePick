@@ -216,17 +216,19 @@ export class EntryRepository {
     return sink
   }
 
-  /** 扫描窗口内的原始消息（管线输入；按发送时间倒序返回，由调用方按群分片）。 */
-  readWindowMessages(window: ExtractWindow): RawMessage[] {
+  /** 扫描窗口内的原始消息（管线输入；按发送时间倒序返回，由调用方按群分片）。
+   *  `groupId` 给定时把群过滤下推到存储层 —— 按群分析专用：避免全库读取上限
+   *  （`MESSAGE_SCAN_HARD_CAP`）把目标群的较早消息截断在外。 */
+  readWindowMessages(window: ExtractWindow, groupId?: Id): RawMessage[] {
+    const filter: SharedFilter = {
+      groupIds: groupId === undefined ? null : [groupId],
+      timeRange: { from: window.from, to: window.to },
+    }
     const records: RawMessage[] = []
     let page = 1
     while (records.length < this.#messageHardCap) {
       const pageSize = Math.min(this.#readPageSize, this.#messageHardCap - records.length)
-      const result = this.#port.read(
-        'DM-003',
-        { timeRange: { from: window.from, to: window.to } },
-        { page, pageSize },
-      )
+      const result = this.#port.read('DM-003', filter, { page, pageSize })
       records.push(...result.records)
       if (result.records.length === 0 || records.length >= result.pageInfo.total) break
       page += 1

@@ -232,7 +232,6 @@ export class ExtractPipeline {
       ),
     )
     counts.extracted = drafts.length
-    counts.recognized = counts.recognized
 
     if (drafts.length > 0) {
       counts.written = (await this.#finalize(window, drafts, failures)).written
@@ -503,7 +502,9 @@ export class ExtractPipeline {
     const counts = emptyCounts()
     let messages: RawMessage[]
     try {
-      messages = this.#repository.readWindowMessages(window).filter((message) => message.groupId === scope.groupId)
+      messages = this.#repository
+        .readWindowMessages(window, scope.groupId)
+        .filter((message) => message.groupId === scope.groupId)
     } catch (error) {
       return { status: 'failed', counts, failures: [failureFromError(error, scope.groupId)], window }
     }
