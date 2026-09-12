@@ -1,7 +1,8 @@
 /**
  * MOD-005 §7「任务结果校验」测试面（`domain/tasks.ts` 纯函数）：
  *
- * - 识别：梗名 / 解读 / 类型闭集 / 来源引用四项缺一即失败（§6：该分项不落库）；
+ * - 识别：梗名 / 解读 / 类型闭集 / 来源引用四项缺一即失败（§6：该分项不落库；
+ *   来源引用显式为空 = 未实际使用 → 跳过该条，不算失败）；
  * - 变体：跨群成员被丢弃、不做跨群归并（AC-076）；
  * - 精华：可回指来源、空结果失败、展开上限 `ESSENCE_MAX`。
  */
@@ -70,6 +71,24 @@ describe('MOD-005 tasks：识别结果校验', () => {
 
   it('空结果：合法返回空条目（由批次层决定不落库）', () => {
     expect(parseRecognition({ items: [] }, units, messages())).toEqual({ ok: true, items: [], sourceRefs: [] })
+  })
+
+  it('来源引用显式为空数组：跳过该条（仅被讨论/起名、未实际使用），不视为失败', () => {
+    const parsed = parseRecognition(
+      {
+        items: [
+          { name: 'yyds', kind: '口头禅', interpretation: '解读', sourceRefs: [1] },
+          { name: '只被传唤', kind: '内部梗', interpretation: '解读', sourceRefs: [] },
+        ],
+      },
+      units,
+      messages(),
+    )
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.items).toHaveLength(1)
+    expect(parsed.items[0]?.name).toBe('yyds')
+    expect(parsed.sourceRefs).toEqual(['m1'])
   })
 })
 

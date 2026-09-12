@@ -60,6 +60,14 @@ export interface EssencePickDraft {
   messageIds: Id[]
 }
 
+/** 条目声明的来源引用是否「显式为空」（空数组 / 全空白 / null；字段缺失不算）。 */
+function isExplicitlyEmptyRefs(item: TaskResultItem): boolean {
+  const raw = item['sourceRefs']
+  if (raw === null) return true
+  if (!Array.isArray(raw)) return false
+  return raw.every((v) => v === null || v === undefined || (typeof v === 'string' && v.trim().length === 0))
+}
+
 /**
  * 解析识别结果：条目必须含非空梗名 / 非空解读 / 闭集内类型 / 可回指至少一条消息。
  * 同名条目合并其来源消息（重复输出不产生第二行）。
@@ -82,6 +90,9 @@ export function parseRecognition(
     }
     const messageIds = resolveRefsToMessages(item, units, messagesById)
     if (messageIds.length === 0) {
+      /* 新口径（2026-09-13）：sourceRefs 显式为空 = 该梗在本窗仅被讨论/起名、未实际
+         使用 → 跳过该条（不落出现），不按失败处理；反之给出无法回指的引用仍视为协议错误。 */
+      if (isExplicitlyEmptyRefs(item)) continue
       return { ok: false, reason: `识别结果缺少可回指的来源消息（梗名：${name}）` }
     }
     for (const messageId of messageIds) sourceRefs.add(messageId)
