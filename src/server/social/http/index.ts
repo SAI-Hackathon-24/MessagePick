@@ -61,7 +61,7 @@ import {
   type SocialTaskGateway,
 } from '../build/gateway'
 import type { BuildReport, ProfileBuildPipeline } from '../build/index'
-import type { SocialIndex } from '../build/index-store'
+import { indexMembersById, type SocialIndex } from '../build/index-store'
 import { tagHeatScores } from '../build/stages'
 import {
   analysisFailure,
@@ -328,7 +328,12 @@ export class SocialHttpAdapter implements SocialProfileApi {
       throw socialError(ErrorCode.IDENTITY_NOT_READY, '「我」的身份未就绪', { scope })
     }
 
-    const memberById = new Map(this.#index.members().map((member) => [member.memberId, member]))
+    /**
+     * ⚠️ 不要就地 `new Map(members.map(...))`：同一 memberId 跨群重复会让后写覆盖
+     * （真机上 `me` 在 22 个群各一条），导致「我的群友」算不出来。
+     * 复用 `indexMembersById` —— 它优先挑 `isMe` 的记录。
+     */
+    const memberById = indexMembersById(this.#index.members())
     const friendIds = myFriendPersonIds(me, this.#index.persons(), memberById)
     const myTags = this.#index.effectiveTagsOf(me.personId)
     const myScores = scoresOf(me, myTags)
