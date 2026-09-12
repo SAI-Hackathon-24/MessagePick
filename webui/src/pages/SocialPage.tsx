@@ -15,6 +15,7 @@
  *   · 人-人关系图谱（REQ-069）与兴趣时间轴 / 事件流（REQ-067，仅可视化，不参与权重 —— REQ-087）
  */
 import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Compass, HeartHandshake, Link2, Tags, UserRound, Users } from 'lucide-react';
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
@@ -33,11 +34,43 @@ type Direction = SocialDirection;
 
 export default function SocialPage() {
   const { filter } = useAppState();
+  /* 侧边栏子菜单（/social/forward|reverse|pair|mine|graph|alignment）驱动视图：
+     曾只改 URL 而页面不响应。内部切换用 navigate，保证 URL / 侧边栏高亮与页面一致。 */
+  const { view: viewParam } = useParams<{ view: string }>();
+  const navigate = useNavigate();
   const [direction, setDirection] = useState<Direction>('forward');
   const [personId, setPersonId] = useState('');
   const [pairA, setPairA] = useState('');
   const [pairB, setPairB] = useState('');
   const [extraTab, setExtraTab] = useState<'none' | 'graph' | 'timeline' | 'alignment' | 'mine'>('none');
+
+  /* URL → 视图状态（与侧边栏同源）：forward/reverse 切方向并收起附加视图；
+     mine/graph/timeline/alignment 展开对应附加面板；pair 收起面板并滚到配对区。 */
+  useEffect(() => {
+    switch (viewParam) {
+      case 'reverse':
+        setDirection('reverse');
+        setExtraTab('none');
+        break;
+      case 'mine':
+      case 'graph':
+      case 'timeline':
+      case 'alignment':
+        setExtraTab(viewParam);
+        break;
+      case 'pair':
+        setExtraTab('none');
+        break;
+      default:
+        setDirection('forward');
+        setExtraTab('none');
+        break;
+    }
+  }, [viewParam]);
+
+  useEffect(() => {
+    if (viewParam === 'pair') document.getElementById('social-pair')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [viewParam]);
 
   const graph = useApi(() => api.relationGraph(filter), [JSON.stringify(filter)]);
   const cards = useApi(() => api.interestScoreCards(filter), [JSON.stringify(filter)]);
@@ -89,7 +122,7 @@ export default function SocialPage() {
               key={d.k}
               type="button"
               data-testid={`social-${d.k}`}
-              onClick={() => setDirection(d.k)}
+              onClick={() => navigate(`/social/${d.k}`)}
               className={cn('inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors', direction === d.k ? 'bg-white text-jade-700 shadow-sm' : 'text-ink-500 hover:text-ink-700')}
             >
               <d.icon size={14} />
@@ -115,7 +148,11 @@ export default function SocialPage() {
             { k: 'alignment', label: '身份对齐' },
           ] as const
         ).map((t) => (
-          <Chip key={t.k} active={extraTab === t.k} onClick={() => setExtraTab(t.k)}>
+          <Chip
+            key={t.k}
+            active={extraTab === t.k}
+            onClick={() => navigate(t.k === 'none' ? (direction === 'reverse' ? '/social/reverse' : '/social/forward') : `/social/${t.k}`)}
+          >
             {t.label}
           </Chip>
         ))}
@@ -159,18 +196,20 @@ export default function SocialPage() {
         <InterestToPeoplePanel />
       )}
 
-      {/* 两人配对（REQ-062） */}
-      <Card>
-        <CardHeader title="两人配对" icon={HeartHandshake} subtitle="共同爱好 + 契合度 + 逐维度差值（雷达叠加对比）" />
-        <div className="space-y-3 px-4 py-3.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <PersonSelect label="A" value={pairA} onChange={setPairA} options={people} />
-            <span className="text-ink-300">×</span>
-            <PersonSelect label="B" value={pairB} onChange={setPairB} options={people} />
+      {/* 两人配对（REQ-062；侧边栏「两人配对」定位到此区） */}
+      <div id="social-pair" className="scroll-mt-28">
+        <Card>
+          <CardHeader title="两人配对" icon={HeartHandshake} subtitle="共同爱好 + 契合度 + 逐维度差值（雷达叠加对比）" />
+          <div className="space-y-3 px-4 py-3.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <PersonSelect label="A" value={pairA} onChange={setPairA} options={people} />
+              <span className="text-ink-300">×</span>
+              <PersonSelect label="B" value={pairB} onChange={setPairB} options={people} />
+            </div>
+            <PairMatchPanel aId={pairA} bId={pairB} />
           </div>
-          <PairMatchPanel aId={pairA} bId={pairB} />
-        </div>
-      </Card>
+        </Card>
+      </div>
 
       {/* 评分卡（REQ-068、REQ-078） */}
       <section>
