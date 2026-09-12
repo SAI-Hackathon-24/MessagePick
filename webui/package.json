@@ -3,14 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "聊斋 MessagePick — 微信群聊分析 WebUI（三大核心功能：热梗提炼与再创作 / 信息与通知提取 / 正向与反向社交）",
+  "description": "聊斋 MessagePick WebUI —— 按 docs/design 契约实现（MOD-004 外壳 + 梗分析 / 信息提取 / 社交画像）",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:layout": "node scripts/test-wordcloud-layout.mjs",
-    "test:e2e": "node scripts/e2e-probe.mjs"
+    "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

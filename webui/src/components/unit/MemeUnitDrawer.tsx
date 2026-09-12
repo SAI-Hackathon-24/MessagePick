@@ -11,7 +11,9 @@
  */
 import { useState } from 'react';
 import { ExternalLink, MessageSquareQuote, Sparkles, Table2, Wand2 } from 'lucide-react';
+import { useEffect } from 'react';
 import { api } from '@/api';
+import { useAppState } from '@/state/appState';
 import { fmtMD } from '@/lib/format';
 import { CORRECTION_LABEL, HEAT_STATE_LABEL, MEME_TYPE_COLOR, MEME_TYPE_LABEL, type CorrectionMark, type MemeUnit, type SourceRef } from '@/types';
 import { Avatar, Badge, Card, CardHeader, Chip, Drawer, MiniStat, NoticeBar } from '@/components/ui';
@@ -37,11 +39,20 @@ export function MemeUnitDrawer({
   onCorrected: (next: MemeUnit) => void;
   onGenerate: (unit: MemeUnit) => void;
 }) {
+  const { claimDrawer, releaseDrawer } = useAppState();
   const [showTable, setShowTable] = useState(false);
   const [showAllHighlights, setShowAllHighlights] = useState(false);
   const [mergeTarget, setMergeTarget] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  /* 抽屉互斥：打开时登记，关闭时释放（避免与设置等其它 modal 叠加） */
+  useEffect(() => {
+    if (!unit) return;
+    const id = `meme-unit:${unit.memeId}`;
+    claimDrawer(id);
+    return () => releaseDrawer(id);
+  }, [unit?.memeId, claimDrawer, releaseDrawer]);
 
   if (!unit) return null;
 
@@ -66,6 +77,7 @@ export function MemeUnitDrawer({
       open={open}
       onClose={onClose}
       width="max-w-3xl"
+      kind="meme-unit"
       title={
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-lg font-bold">{unit.name}</span>

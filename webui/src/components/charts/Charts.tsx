@@ -105,7 +105,15 @@ export function HobbyRadar({
       tooltip: { confine: true },
       legend: compare ? { bottom: 0, textStyle: { fontSize: 11 } } : undefined,
       radar: {
-        indicator: cats.map((c) => ({ name: INTEREST_CATEGORY_LABEL[c], max: Math.max(4, ...cats.map((k) => Math.max(scores[k], compare?.scores[k] ?? 0))) })),
+        // 维度分 = 该维度下全部二级标签置信度之和（REQ-080）。
+        // 标签置信度 0~1、每人 4~7 个标签，故维度分通常落在 0~4；
+        // 轴上限按当次数据的最大值上取整，保证形状可读、且不改变分数本身。
+        indicator: cats.map((c) => ({
+          name: INTEREST_CATEGORY_LABEL[c],
+          // 轴上限既要不小于数据最大值，又要留足刻度间隔（否则 ECharts 会告警刻度不可读）
+          max: Math.max(2, Math.ceil(Math.max(...cats.map((k) => Math.max(scores[k], compare?.scores[k] ?? 0))) + 0.5)),
+        })),
+        splitNumber: 4,
         radius: '62%',
         splitLine: { lineStyle: { color: 'rgba(11,15,23,0.08)' } },
         axisName: { fontSize: 11, color: '#556074' },

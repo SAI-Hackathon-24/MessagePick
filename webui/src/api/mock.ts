@@ -591,11 +591,19 @@ export const mockMyCompatibility = (): MyCompatibility => {
 };
 
 /** 组局建议（API-024）：仅文字建议，不含待办、不含可直接发送的文案（REQ-063） */
-export const mockGatheringSuggestion = (interest: string, personIds: string[]): GatheringSuggestion => ({
-  interest,
-  candidates: personIds.map((p) => ({ personId: p, name: PERSON_NAMES[p] ?? p })),
-  text: `可以约 ${personIds.map((p) => PERSON_NAMES[p] ?? p).join('、')} 一起${interest}。他们在这项兴趣上的置信度都不低，且都还在群里活跃，发起前建议先问一句时间。`,
-});
+/** 一级维度的中文名（REQ-017：不引入英文术语；组局建议里按维度检索时也要用中文） */
+const CATEGORY_CN: Record<string, string> = { sports: '运动', art: '艺术', game: '游戏', entertainment: '娱乐', social: '社交' };
+
+export const mockGatheringSuggestion = (interest: string, personIds: string[]): GatheringSuggestion => {
+  // 检索入口可能是二级标签，也可能是一级维度（此时需换成中文名再写进建议文本）
+  const label = CATEGORY_CN[interest] ?? interest;
+  const names = personIds.map((p) => PERSON_NAMES[p] ?? p);
+  return {
+    interest: label,
+    candidates: personIds.map((p) => ({ personId: p, name: PERSON_NAMES[p] ?? p })),
+    text: `可以约 ${names.join('、')} 一起${label}。他们在这项兴趣上的置信度都不低，且都还在群里活跃，发起前建议先问一句时间。`,
+  };
+};
 
 /** 身份对齐（API-025 / API-026） */
 export const mockAlignmentCandidates = (): IdentityAlignmentCandidate[] => ALIGNMENT_CANDIDATES.map((c) => ({ ...c })) as IdentityAlignmentCandidate[];

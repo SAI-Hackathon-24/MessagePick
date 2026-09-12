@@ -6,7 +6,9 @@
  * 附加　：消息涉及成员的**内联兴趣提示**（REQ-070；只含已确认数据，无数据时不显示提示）
  */
 import { ExternalLink, MessageSquareText, Sparkles, Users } from 'lucide-react';
+import { useEffect } from 'react';
 import { api } from '@/api';
+import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
 import { fmtMD, fmtDayLabel } from '@/lib/format';
 import { EXTRACT_TYPE_LABEL } from '@/types';
@@ -14,12 +16,20 @@ import { Avatar, Badge, Card, CardHeader, Drawer, ErrorState, LoadingState, Noti
 import { MessageBubble } from './MessageBubble';
 
 export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; open: boolean; onClose: () => void }) {
+  const { claimDrawer, releaseDrawer } = useAppState();
   const detail = useApi(() => (id ? api.messageDetail(id) : Promise.resolve({ ok: true, data: null } as never)), [id]);
   const d = detail.data;
 
   /* 成员兴趣提示：由外壳组装（REQ-070、API-029）—— 无数据时不显示提示，也不弹错误 */
   const memberIds = (d?.body.messages ?? []).map((m) => m.senderId).filter(Boolean);
   const hints = useApi(() => api.memberInterestHints([...new Set(memberIds)]), [memberIds.join(',')]);
+
+  useEffect(() => {
+    if (!open || !id) return;
+    const key = `message-detail:${id}`;
+    claimDrawer(key);
+    return () => releaseDrawer(key);
+  }, [open, id, claimDrawer, releaseDrawer]);
 
   if (!open) return null;
 
@@ -28,6 +38,7 @@ export function MessageDetailDrawer({ id, open, onClose }: { id: string | null; 
       open={open}
       onClose={onClose}
       width="max-w-3xl"
+      kind="message-detail"
       title={d ? <span className="text-[15px] font-semibold leading-snug text-ink-800">{d.heading.summaryLine}</span> : '消息详情'}
       subtitle={
         d && (

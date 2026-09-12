@@ -59,6 +59,7 @@ export function SettingsDialog() {
       open={settingsOpen}
       onClose={() => setSettingsOpen(false)}
       width="max-w-2xl"
+      kind="settings"
       title="设置"
       subtitle="数据去向说明与隐私删除。本应用不提供任何对外分享 / 发送通道。"
     >

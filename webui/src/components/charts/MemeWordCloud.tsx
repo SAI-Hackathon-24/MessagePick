@@ -5,14 +5,18 @@
  * · 悬停显示：出现次数、首现时间、最近调用、类型（REQ-024）
  * · 布局切换：按热度 / 按首次出现时间（后者每个词下标注首现日期 —— REQ-023）
  * · 点击任意词 → 在该词位置展开梗单元（REQ-022，由调用方处理定位）
+ * 词云是 ECharts 的扩展图表（echarts-wordcloud），同样按需懒加载。
  */
-import 'echarts-wordcloud';
-import type { EChartsOption } from 'echarts';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { CloudLayout, MemeCloudEntry, MemeType } from '@/types';
 import { MEME_TYPE_COLOR, MEME_TYPE_LABEL } from '@/types';
 import { fmtMD } from '@/lib/format';
 import { EChart } from './EChart';
+
+/** echarts-wordcloud 依赖 echarts 全局注册，故在绘制前动态引入 */
+const prepareWordCloud = async () => {
+  await import('echarts-wordcloud');
+};
 
 export function MemeWordCloud({
   entries,
@@ -25,7 +29,7 @@ export function MemeWordCloud({
   onPick: (e: MemeCloudEntry, position?: { x: number; y: number }) => void;
   height?: number;
 }) {
-  const option = useMemo<EChartsOption>(() => {
+  const option = useMemo(() => {
     const max = Math.max(...entries.map((e) => e.frequency), 1);
     const min = Math.min(...entries.map((e) => e.frequency), 0);
     return {
@@ -35,8 +39,7 @@ export function MemeWordCloud({
         borderWidth: 0,
         textStyle: { color: '#fff', fontSize: 12 },
         formatter: (p: unknown) => {
-          const item = (p as { data: { name: string; entry: MemeCloudEntry } }).data;
-          const e = item.entry;
+          const e = (p as { data: { entry: MemeCloudEntry } }).data.entry;
           // REQ-024：悬停显示四项
           return [
             `<b style="font-size:13px">${e.name}</b>`,
@@ -64,10 +67,7 @@ export function MemeWordCloud({
           textStyle: {
             fontFamily: 'PingFang SC, Microsoft YaHei, sans-serif',
             fontWeight: 700,
-            color: (p: unknown) => {
-              const e = (p as { data: { entry: MemeCloudEntry } }).data.entry;
-              return MEME_TYPE_COLOR[e.type as MemeType];
-            },
+            color: (p: unknown) => MEME_TYPE_COLOR[(p as { data: { entry: MemeCloudEntry } }).data.entry.type as MemeType],
           },
           // 按首次出现时间布局时，在词下标注首现日期（REQ-023）
           data: entries.map((e) => ({
@@ -78,9 +78,8 @@ export function MemeWordCloud({
           emphasis: { textStyle: { textShadowBlur: 12, textShadowColor: 'rgba(7,193,96,0.45)' } },
         },
       ],
-      // 供无障碍等价视图与调试使用
       aria: { enabled: true, description: `梗词云，共 ${entries.length} 个梗，取值范围 ${min}~${max} 次` },
-    } as EChartsOption;
+    } as Record<string, unknown>;
   }, [entries, layout]);
 
   const onEvents = useMemo(
@@ -93,5 +92,7 @@ export function MemeWordCloud({
     [onPick],
   );
 
-  return <EChart option={option} height={height} onEvents={onEvents} />;
+  const prepare = useCallback(() => prepareWordCloud().then(() => undefined), []);
+
+  return <EChart option={option} height={height} onEvents={onEvents} prepare={prepare} />;
 }

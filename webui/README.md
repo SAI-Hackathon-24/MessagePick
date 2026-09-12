@@ -1,10 +1,26 @@
 # 聊斋 MessagePick · WebUI
 
-微信群聊分析工具的图形化前端。把群里的**海量消息**变成两样东西：
-**清晰可执行的信息**（通知 / 待办）与**有生命力的群文化**（热梗 / 表情包）。
+按本仓库**已定稿的契约层**实现的图形化前端：实现 `MOD-004`（应用外壳与全局筛选）的浏览器侧，
+以及三个业务模块（群聊梗分析 / 群聊信息提取 / 正向·反向社交）的视图与交互。
 
-> 第 24 组 · 回声队 · SAI 2026 级新生黑客松 AI 挑战赛
-> 数据链路：`wechat-cli`（本地只读）→ core（结构化 prompt）→ LLM（分析）→ **本 WebUI**
+> **文档归属**：需求、模块、接口、数据模型、验收用例的唯一事实来源都在 [`../docs/`](../docs/)。
+> 本文件只讲**怎么跑起来、代码怎么组织**，不复述契约正文（见 `docs/README.md` §1、§8）。
+
+---
+
+## 唯一依据（改代码前先读）
+
+| 内容 | 文档 |
+| --- | --- |
+| 用户场景与需求条目（`US-###` / `REQ-###`） | [`../docs/product/prd.md`](../docs/product/prd.md) |
+| 模块职责与边界（`MOD-001` ~ `MOD-008`） | [`../docs/design/modules.md`](../docs/design/modules.md) |
+| **接口契约（`API-001` ~ `API-034`、16 个错误标识）** | [`../docs/design/api-contract.md`](../docs/design/api-contract.md) |
+| **数据模型（`DM-001` ~ `DM-022`）** | [`../docs/design/data-model.md`](../docs/design/data-model.md) |
+| 架构与技术选型（决策 2：React + ECharts） | [`../docs/design/impl/high-level-design.md`](../docs/design/impl/high-level-design.md) |
+| 验收用例（`AC-001` ~ `AC-139`） | [`../docs/plan/acceptance-tests.md`](../docs/plan/acceptance-tests.md) |
+
+**本前端不发明字段**：`src/types.ts` 里的每个类型都能指回上述文档；要改字段先走
+`design-doc-change` skill 改上游契约，再同步这里。
 
 ---
 
@@ -12,20 +28,40 @@
 
 ```bash
 cd webui
-npm install          # 已配置 npmmirror 镜像
-npm run dev          # → http://127.0.0.1:5273
-npm run build        # 生产构建（tsc -b && vite build）
-npm run typecheck    # 只做类型检查
-
-# 自测（验收标准 A1–A12 的自动化版本）
-npm run test:layout  # 词云布局算法单测，11 项，无需浏览器
-npm run test:e2e     # 真实浏览器点击驱动，17 项（需 dev server + Chrome 调试端口）
+npm install
+npm run dev        # → http://127.0.0.1:5273
+npm run build      # tsc -b && vite build
+npm run typecheck  # 只做类型检查
+npm run verify     # 端到端验收检查（见下）
 ```
 
-### 端到端自测怎么跑
+### 两种运行模式
 
-`npm run test:e2e` 通过 Chrome DevTools Protocol 真实点击驱动界面，校验验收标准。
-先起一个带调试端口的无头 Chrome，再跑脚本：
+| 模式 | 说明 |
+| --- | --- |
+| `mock`（默认） | 走 `src/api/mock.ts` + `src/api/fixtures.ts`。**后端 `MOD-001` ~ `MOD-008` 看板均为「未开始」**，此模式用于在后端就位前开发与自检界面：数据严格按 `api-contract.md` 与 `data-model.md` 的口径产出。 |
+| `http` | 走本机服务进程的 HTTP 接口（HLD §1：浏览器只经本机 HTTP 取数）。 |
+
+切到真实后端：
+
+```bash
+# 1) 打开 vite.config.ts 里已预留的 /api 代理
+# 2) 设置模式
+echo 'VITE_API_MODE=http' > .env.local
+# 3) 删除开发期替身（REQ-019 / AC-010：不做演示数据版本）
+rm src/api/fixtures.ts src/api/mock.ts
+```
+
+> ⚠️ `REQ-019` / `AC-010` 明确「不做演示数据版本」，交付物只接真实微信消息。
+> `fixtures.ts` / `mock.ts` **不是产品功能**，是让界面在无后端时可被验证的替身，
+> 两个文件头部都写明了这一点；接入真实后端后必须删除。
+
+---
+
+## 端到端验收检查
+
+`npm run verify` 通过 Chrome DevTools Protocol **真实点击驱动**界面，按 `REQ-###` / `AC-###`
+检查契约层面的行为与术语口径（40 项）。先起两个进程：
 
 ```bash
 # 终端 1
@@ -36,111 +72,49 @@ google-chrome --headless=new --disable-gpu --no-sandbox \
   --remote-debugging-port=9222 --user-data-dir=/tmp/mp-chrome about:blank
 
 # 终端 3
-npm run test:e2e
+npm run verify            # 或 npm run verify http://127.0.0.1:5273
 ```
 
-当前**不需要任何后端**即可跑通全部页面：数据来自 `src/api/mockData.ts`（种子固定，每次刷新结果一致，方便演示与评审）。
-
-### 走查异常分支
-
-在地址后加 `?sim=` 参数即可，无需后端配合：
-
-| 地址 | 效果 |
-|---|---|
-| `#/meme?sim=empty` | 空态：词云、梗卡片、通知全部走空数据分支 |
-| `#/meme?sim=error` | 失败态：返回 `LLM_TIMEOUT` 错误信封 |
-| `#/meme?sim=slow` | 慢速：强制 3s 延迟，检查骨架屏 |
-
-也可以直接用顶栏右侧的「正常 / 空态 / 失败态 / 慢速」开关切换。
+覆盖范围：外壳（`REQ-002`/`004`/`005`/`011`/`012`/`016`/`017`/`018`）、
+模块一（`REQ-013`/`020`~`023`/`026`~`036`/`037`/`038`）、
+模块二（`REQ-045`~`049`/`070`）、
+模块三（`REQ-050`/`062`~`065`/`068`/`071`/`073`/`075`/`082`），以及运行期零告警。
 
 ---
 
-## 页面与三大核心功能
-
-| 路由 | 页面 | 对应登记表功能 | 关键展示形式 |
-|---|---|---|---|
-| `/` | 总览 | 统一入口 | 指标卡、活跃分布、类型占比、发言排行、DDL 提醒 |
-| `/meme` | 热梗分析 | **核心功能点一** | **可点击词云 → 梗卡片 → 梗时间轴 → 再生成** |
-| `/inbox` | 信息提取 | **核心功能点三** | **通知总览 + 时间轴 + 多维筛选 + 详情抽屉** |
-| `/social` | 社交关系 | **核心功能点二** | **正向=熟人之间做了什么**（关系综述+共同经历时间轴）/ **反向=非熟人但有相似兴趣、有交友潜力**（潜力分+非熟人依据+相似度对比+破冰建议）；另有画像雷达卡 |
-| `/insight` | 数据洞察 | 支撑页 | 图表组件目录，便于复用 |
-
-### 已实现的关键交互（对应 `目标.md`）
-
-**热梗分析**
-- 可点击词云：字号 = 频次；点词条 → 打开梗卡片抽屉
-- 词云三种布局：**词云 / 热度排行 / 按出现时间排序**
-- 梗卡片：**首次出现时间、最近一次调用时间、按时间划分的分布图**，外加趋势迷你图、生命周期（<14 天标「已凉」）、主要贡献者、代表消息
-- 梗时间轴两种读法：**生命线**（甘特式，看一个梗从初现到无人问津经过多久）与**热度编组**（看同一时段什么梗在爆发）
-- 再生成：表情包 / 配文图 / 海报等，风格可切换（出图走占位 SVG，接口已留）
-- 词云放不下的长尾词自动收纳到列表，**信息不丢失**
-
-**社交关系（功能三）**
-
-语义已明确，模板按此实现（**分析口径由后端负责**）：
-
-- **正向社交**：已经熟识的人**做了什么** → 熟人清单 → 关系综述 + 互动指标 + **共同经历时间轴**（一起活动/并肩攻坚/长谈/互相帮忙/庆祝，可展开原始消息）+ 共同话题 + 相处感觉 + 维护建议
-- **反向社交**：**非熟人但有相似兴趣爱好、具备交友潜力** → 候选卡片按潜力分排序，每张卡都给出 **「为什么算非熟人」**（直接互动条数、最近互动、共同好友）、**相似度双向对比条**（我 / TA，维度可扩展）、共同兴趣、**相似证据**（双方原话）、**破冰建议**与可切入的群
-- 两模式共用**性格展示卡片**：雷达图 + 人格标签 + 语言风格 + 口癖 + 置信度
-
-**信息提取**
-- 筛选：关键词、时间范围、来源群（多选）、信息类型、优先级、待办状态、只看带 DDL
-- 排序：时间倒序 / 时间正序（时间轴）/ 优先级 / DDL 紧急度；支持**多个群合并排序**
-- 三种视图：**时间轴 / 卡片 / 紧凑列表**
-- 详情抽屉：heading = **AI 一句话总结 + 来源群 + 时间**；正文 = **AI 总结 + 所有群消息来源（时间正序会话流）**，并有抽取要素表、状态流转、复制摘要
-
----
-
-## 目录结构
+## 代码结构
 
 ```
-webui/
-├── docs/
-│   ├── 前端需求整理.md      # 需求、功能边界、验收标准、待定稿问题清单
-│   └── 接口契约清单.md      # wechat-cli 真实字段 + 建议路由 + 扩展方式
-├── src/
-│   ├── types.ts             # ★ 数据契约（所有领域对象 + ext 扩展位）
-│   ├── api/
-│   │   ├── index.ts         # ★ 数据接入层：mock → 真实后端只改这里
-│   │   └── mockData.ts      # 演示数据（种子固定）
-│   ├── app/appState.ts      # 全局状态：群范围、时间范围、模拟场景
-│   ├── lib/                 # cn / 格式化 / useApi / 词云布局算法
-│   ├── components/
-│   │   ├── ui/              # Card / Chip / Badge / Avatar / 空错态 / 抽屉
-│   │   ├── charts.tsx       # Sparkline / TrendArea / DistributionBars / Donut / Radar / HourBars / HeatStrip / BarList
-│   │   ├── controls.tsx     # 群选择器 / 时间范围 / 场景切换
-│   │   ├── layout/          # AppShell
-│   │   ├── meme/            # WordCloud / MemeCardView / MemeTimeline / MemeDetailDrawer
-│   │   ├── notice/          # NoticeCard / NoticeDetailDrawer
-│   │   └── scaffold/        # 未定稿模块的占位脚手架
-│   └── pages/               # 5 个页面
-└── vite.config.ts           # 已预留 /api 代理注释
+src/
+├── types.ts                  ★ 契约层映射（含 16 个错误标识与统一呈现口径）
+├── api/
+│   ├── index.ts              ★ 34 条 API 的唯一调用点（mock / http 双模式）
+│   ├── fixtures.ts            开发期数据替身（接真实后端后删除）
+│   └── mock.ts                开发期契约实现（接真实后端后删除）
+├── state/appState.tsx        全局筛选条件 · 更新状态 · 抽屉互斥 · 设置面板
+├── components/
+│   ├── shell/                外壳：AppShell / GlobalFilterBar / FirstRunGuide / SettingsDialog
+│   ├── ui/                   基础展示单元（含异常与空态的统一呈现）
+│   ├── charts/               ECharts 按需懒加载容器 + 各图表
+│   └── unit/                 业务展示单元：梗单元 / 消息详情 / 生成面板 / 社交各面板
+└── pages/                    总览 / 梗分析 / 信息提取 / 社交画像
 ```
 
----
+### 几处与契约直接对应的实现要点
 
-## 可扩展性设计（针对 PRD 未定稿）
+- **全局筛选条是唯一筛选控件**（`REQ-004`、`REQ-049`）：只有 `shell/GlobalFilterBar` 产生
+  群多选 · 时间范围 · 关键词 · 身份；三个模块只消费，不自建同类控件。关键词的匹配对象
+  随模块变化（`REQ-005`），在控件上直接标注。
+- **身份无需手工设置**（`REQ-006`）：界面只展示「我」并据此提供「我相关」视角，没有输入框。
+- **异常统一呈现**（`REQ-016`）：`types.ts` 的 `ERROR_PRESENTATION` 把 16 个错误标识映射到
+  五种处置方式（重试 / 清除筛选 / 引导更新 / 返回 / 确认），三模块与外壳共用 `ErrorState`。
+- **图表按需加载**：`REQ-010` 要求万条级首屏 < 2s，故 ECharts 与 `echarts-wordcloud`
+  都在首次绘制时动态引入（首屏 JS 因此从 473KB 降到约 122KB gzip）。
+- **术语口径**（`REQ-017`）：统一用「梗单元」；模块一「梗词云」与模块三「个人标签词云」
+  区分命名；「梗生命周期」与「消息时间轴」不共用名称。
 
-因为 `docs/raw/raw_design.md` 与 PRD 尚未完成，本项目刻意做了这些预留：
+## 尚未完成
 
-1. **`ext?: Record<string, unknown>`** 挂在每个领域对象上 —— 后端新增字段前端不会报错。
-2. **枚举驱动 UI** —— 加一个 `RemixKind` / `NoticeCategory`，对应按钮和筛选项自动出现，不用改布局。
-3. **`ModuleScaffold` 占位组件** —— 页面里凡「未来要加、现在没定死」的能力，都显式列出扩展点与改法。
-4. **`CouplingNote` 边界说明** —— 每个页面标注与 `wechat-cli` / core 的约定，避免返工。
-5. **`AnalysisEnvelope` 统一信封** —— 换数据源只改 adapter。
-6. **`NormalizedMessage` + `raw_line` 降级** —— wechat-cli 目前 `history` 返回的是格式化行文本，前端已按「结构化优先、原文保底」适配。
-
----
-
-## 技术栈
-
-React 18 · TypeScript 5（`strict`）· Vite 5 · Tailwind CSS 3 · react-router 6 · lucide-react
-图表全部为**手写 SVG**，不依赖任何图表库 —— 离线可跑、样式完全可控、体积小（gzip 后 JS 约 113 KB）。
-
-## 待办
-
-- [ ] 等 `raw_design.md` / PRD 定稿后，替换 `types.ts` 中标注 `TODO(接口待定)` 的字段
-- [ ] 接入真实 core 接口（改 `src/api/index.ts` + 打开 vite proxy）
-- [ ] 功能三定稿后替换占位数据（正向/反向社交语义、授权边界、匹配范围）
-- [ ] 表情包出图接真实 LLM 接口，替换占位 SVG
-- [ ] 把本目录并入主仓库（建议 `webui/`）
+- 后端的 `MOD-001` ~ `MOD-008` 均未实现，`http` 模式尚未与真实接口联调。
+- 端到端检查是契约层面的行为验证，**不等于** `docs/plan/acceptance-tests.md` 中
+  `AC-001` ~ `AC-139` 的全部用例已通过（那需要真实后端）。

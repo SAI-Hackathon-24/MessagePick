@@ -4,14 +4,27 @@
  * 呈现一致，因此异常与空态组件集中在这里，由外壳与各模块复用。
  */
 import { AlertCircle, Inbox, Loader2, RefreshCw, ShieldAlert, type LucideIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { avatarColor } from '@/lib/format';
 import { ERROR_PRESENTATION, type ApiError, type ErrorCode } from '@/types';
 
-export function Card({ children, className, hover, onClick }: { children: ReactNode; className?: string; hover?: boolean; onClick?: () => void }) {
+export function Card({
+  children,
+  className,
+  hover,
+  onClick,
+  'data-testid': testId,
+}: {
+  children: ReactNode;
+  className?: string;
+  hover?: boolean;
+  onClick?: () => void;
+  'data-testid'?: string;
+}) {
   return (
     <div
+      data-testid={testId}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -58,6 +71,7 @@ export function Chip({
   className,
   count,
   title,
+  'data-testid': testId,
 }: {
   children: ReactNode;
   active?: boolean;
@@ -65,9 +79,16 @@ export function Chip({
   className?: string;
   count?: number;
   title?: string;
+  'data-testid'?: string;
 }) {
   return (
-    <button type="button" title={title} onClick={onClick} className={cn('mp-chip', active && 'mp-chip-active', onClick && 'hover:border-jade-500/30', className)}>
+    <button
+      type="button"
+      title={title}
+      data-testid={testId}
+      onClick={onClick}
+      className={cn('mp-chip', active && 'mp-chip-active', onClick && 'hover:border-jade-500/30', className)}
+    >
       {children}
       {count !== undefined && <span className={cn('rounded-full px-1.5 text-[10px]', active ? 'bg-jade-500/20' : 'bg-ink-900/[0.06]')}>{count}</span>}
     </button>
@@ -306,6 +327,7 @@ export function Drawer({
   children,
   footer,
   width = 'max-w-2xl',
+  kind = 'generic',
 }: {
   open: boolean;
   onClose: () => void;
@@ -314,7 +336,19 @@ export function Drawer({
   children: ReactNode;
   footer?: ReactNode;
   width?: string;
+  /** 抽屉类型标识：同一页面可能存在多个抽屉，供精确断言与排障 */
+  kind?: string;
 }) {
+  /* 打开时锁定背景滚动（避免抽屉与页面同时滚动） */
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -323,6 +357,7 @@ export function Drawer({
         role="dialog"
         aria-modal="true"
         data-testid="drawer"
+        data-drawer-kind={kind}
         className={cn('relative flex h-full w-full flex-col border-l border-ink-900/10 bg-white shadow-2xl animate-fade-up', width)}
       >
         <header className="flex items-start justify-between gap-4 border-b border-ink-900/[0.06] px-5 py-4">

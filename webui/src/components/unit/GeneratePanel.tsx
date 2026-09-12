@@ -8,7 +8,7 @@
  * · 全部生成物带「创作」标注（REQ-013）；使用成员素材需先确认（REQ-014）
  * · 遵守边界：AI 不自动发布、不自动替换群内说法（REQ-015、REQ-084）
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Copy, Download, Sparkles, Wand2 } from 'lucide-react';
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
@@ -26,7 +26,7 @@ const TEMPLATES = [
 ];
 
 export function GeneratePanel({ unit, open, onClose, onImported }: { unit: MemeUnit | null; open: boolean; onClose: () => void; onImported: () => void }) {
-  const { filter } = useAppState();
+  const { filter, claimDrawer, releaseDrawer } = useAppState();
   const [kind, setKind] = useState<GenerateKind>('G1');
   const [tier, setTier] = useState<MaterialTier>('pure_template');
   const [template, setTemplate] = useState(TEMPLATES[0].id);
@@ -40,6 +40,13 @@ export function GeneratePanel({ unit, open, onClose, onImported }: { unit: MemeU
 
   const consents = useApi(() => api.materialConsents(), []);
   const history = useApi(() => api.generationHistory(filter), [JSON.stringify(filter)]);
+
+  useEffect(() => {
+    if (!unit) return;
+    const key = `generate:${unit.memeId}`;
+    claimDrawer(key);
+    return () => releaseDrawer(key);
+  }, [unit?.memeId, claimDrawer, releaseDrawer]);
 
   if (!unit) return null;
 
@@ -103,6 +110,7 @@ export function GeneratePanel({ unit, open, onClose, onImported }: { unit: MemeU
       open={open}
       onClose={onClose}
       width="max-w-3xl"
+      kind="generate"
       title={
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-base font-semibold">生成 · {unit.name}</span>

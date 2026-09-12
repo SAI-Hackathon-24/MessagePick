@@ -33,9 +33,17 @@ export interface AppState {
   /** 更新入口的最近一次结果提示 */
   updateNotice: string | null;
   dismissUpdateNotice: () => void;
-  /** 设置面板（含数据去向说明 —— REQ-012） */
+  /**
+   * 设置面板（含数据去向说明 —— REQ-012）。
+   * 同一时刻只允许一个抽屉打开：打开设置会先关闭模块内的抽屉，
+   * 避免两个 modal 叠加、导致焦点与可访问性错乱。
+   */
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  /** 记录当前打开的模块内抽屉（由 useExclusiveDrawer 使用） */
+  activeDrawer: string | null;
+  claimDrawer: (id: string) => void;
+  releaseDrawer: (id: string) => void;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -51,7 +59,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [updating, setUpdating] = useState(false);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeDrawer, setActiveDrawer] = useState<string | null>(null);
   const [statusTick, setStatusTick] = useState(0);
+
+  const claimDrawer = useCallback((id: string) => {
+    setActiveDrawer(id);
+    setSettingsOpen(false); // 打开模块内抽屉时关闭设置（互斥）
+  }, []);
+  const releaseDrawer = useCallback((id: string) => {
+    setActiveDrawer((cur) => (cur === id ? null : cur));
+  }, []);
+  const openSettings = useCallback((open: boolean) => {
+    setSettingsOpen(open);
+    if (open) setActiveDrawer(null); // 打开设置时关闭模块内抽屉（互斥）
+  }, []);
 
   /* 群列表 */
   useEffect(() => {
@@ -132,7 +153,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     updateNotice,
     dismissUpdateNotice: () => setUpdateNotice(null),
     settingsOpen,
-    setSettingsOpen,
+    setSettingsOpen: openSettings,
+    activeDrawer,
+    claimDrawer,
+    releaseDrawer,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

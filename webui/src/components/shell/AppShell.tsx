@@ -85,6 +85,7 @@ export function AppShell() {
             </button>
             <button
               type="button"
+              data-testid="open-settings"
               aria-label="设置"
               onClick={() => setSettingsOpen(true)}
               className="rounded-xl border border-ink-900/[0.08] bg-white/80 p-2 text-ink-500 transition-colors hover:border-jade-500/40 hover:text-jade-700"

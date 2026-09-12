@@ -423,19 +423,36 @@ const MERGED_ALIASES: Record<string, string[]> = {
   摄影: ['拍照', '扫街'],
 };
 
-export const TAGS: InterestTag[] = TAG_POOL.map((t, idx) => ({
-  tagId: `t${idx + 1}`,
-  name: t.name,
-  category: t.category,
-  confidence: Number((0.55 + rng() * 0.43).toFixed(2)),
-  evidence: pickN(MESSAGES.filter((m) => m.kind === 'text'), int(2, 5)).map(toRef),
-  origin: MERGED_ALIASES[t.name] ? 'merged' : rng() < 0.15 ? 'manual' : 'extracted',
-  mergedFrom: MERGED_ALIASES[t.name],
-}));
+export const TAGS: InterestTag[] = TAG_POOL.map((t, idx) => {
+  // 证据条数越多 → 该标签越可信（提及越多、越可信 —— REQ-080 的口径说明）
+  const evidenceCount = int(3, 12);
+  const evidence = pickN(MESSAGES.filter((m) => m.kind === 'text'), evidenceCount).map(toRef);
+  const confidence = Number(Math.min(0.99, 0.45 + evidenceCount * 0.045 + rng() * 0.1).toFixed(2));
+  return {
+    tagId: `t${idx + 1}`,
+    name: t.name,
+    category: t.category,
+    confidence,
+    evidence,
+    origin: MERGED_ALIASES[t.name] ? 'merged' : rng() < 0.15 ? 'manual' : 'extracted',
+    mergedFrom: MERGED_ALIASES[t.name],
+  };
+});
 
 /** 人 → 兴趣（DM-014 是双向索引的唯一数据，正反互为反查 —— REQ-050） */
 export const PERSON_TAGS: Record<string, string[]> = Object.fromEntries(
-  PERSON_IDS.map((pid) => [pid, pickN(TAGS, int(2, 6)).map((t) => t.tagId)]),
+  PERSON_IDS.map((pid) => {
+    // 先按一级维度抽样，保证画像至少覆盖 2~3 个维度（避免雷达出现整轴 0 分）
+    const categories = pickN(['sports', 'art', 'game', 'entertainment', 'social'] as const, int(2, 3));
+    const picked: string[] = [];
+    categories.forEach((c) => {
+      pickN(TAGS.filter((t) => t.category === c), int(1, 3)).forEach((t) => picked.push(t.tagId));
+    });
+    // 再补足到 4~7 个标签
+    const rest = TAGS.filter((t) => !picked.includes(t.tagId));
+    pickN(rest, Math.max(0, int(4, 7) - picked.length)).forEach((t) => picked.push(t.tagId));
+    return [pid, [...new Set(picked)]];
+  }),
 );
 /** 发言不足的成员 → 未知，不做推测（REQ-081） */
 const UNKNOWN_PERSON_IDS = new Set(PERSON_IDS.filter((_, i) => i % 11 === 5));
@@ -448,20 +465,33 @@ export const tagById = (id: string) => TAGS.find((t) => t.tagId === id);
 const activityOf = (personId: string) =>
   MESSAGES.filter((m) => memberById(m.senderId)?.personId === personId).length;
 
+/**
+ * 回复时长（REQ-066 口径）：
+ * 以「被 @ 或直接接话」为触发，取该触发消息的**首条**回复间隔的中位数。
+ * · 触发消息 = 本人发的消息；触发方式 = 该消息被回复方 @ 或引用；
+ * · 排除纯表情回复（图片 / 表情包）与跨天回复（自然日不同）；
+ * · 跨群合并到人。
+ * 实现上按群遍历，只取每个触发消息的第一条有效响应。
+ */
 const replyMedianOf = (personId: string): number | undefined => {
-  const mine = new Set(MEMBERS.filter((m) => m.personId === personId).map((m) => m.id));
-  const replied = MESSAGES.filter((m) => mine.has(m.senderId) && (m.mentionedIds?.length || m.quotedMessageId));
-  if (replied.length < 3) return undefined;
+  const myMemberIds = new Set(MEMBERS.filter((m) => m.personId === personId).map((m) => m.id));
   const gaps: number[] = [];
-  replied.slice(0, 60).forEach((m) => {
-    const trigger = MESSAGES.find((x) => x.id === m.quotedMessageId);
-    if (!trigger) return;
-    const gapMin = (Date.parse(m.sentAt) - Date.parse(trigger.sentAt)) / 60000;
-    if (gapMin > 0 && gapMin < 1440) gaps.push(gapMin);
+  GROUPS.forEach((g) => {
+    const msgs = MESSAGES.filter((m) => m.groupId === g.id);
+    // 触发消息：本人发出，且其后存在 @ 或引用它的回复
+    msgs.forEach((trigger, idx) => {
+      if (!myMemberIds.has(trigger.senderId)) return;
+      const first = msgs.slice(idx + 1).find((r) => r.kind === 'text' && (r.mentionedIds?.includes(trigger.senderId) || r.quotedMessageId === trigger.id));
+      if (!first) return;
+      const sameDay = first.sentAt.slice(0, 10) === trigger.sentAt.slice(0, 10);
+      if (!sameDay) return; // 排除跨天回复
+      const gapMin = Math.round((Date.parse(first.sentAt) - Date.parse(trigger.sentAt)) / 60000);
+      if (gapMin > 0 && gapMin <= 240) gaps.push(gapMin);
+    });
   });
-  if (!gaps.length) return undefined;
+  if (gaps.length < 3) return undefined;
   gaps.sort((a, b) => a - b);
-  return Math.round(gaps[Math.floor(gaps.length / 2)]);
+  return Math.max(1, gaps[Math.floor(gaps.length / 2)]);
 };
 
 export const activityCache: Record<string, number> = Object.fromEntries(PERSON_IDS.map((p) => [p, activityOf(p)]));

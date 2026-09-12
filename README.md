@@ -83,15 +83,14 @@ npm run dev        # → http://127.0.0.1:5273
 
 **当前主链状态**：全部为 `draft`（`docs/raw/raw_design.md` 仍是空白模板），按 §6.3 门禁尚不可被下游消费。
 
-### `webui/` 与 `docs/frontend/` 的定位
+### `webui/` 的定位
 
-这两处是**原型先行**产物：在主链尚未推进时，先把界面做出来以验证需求。
+`webui/` 是**按已定稿契约实现的前端**（`MOD-004` 外壳 + 三个业务模块的视图与交互）。
 
-- 它们**不参与**主链追溯链（`AC → TASK → MOD → REQ → US`），也不被任何下游消费
-- 前端需求与接口契约的**权威版本**将来应落在 `docs/product/prd.md`、
-  `docs/design/api-contract.md`、`docs/design/data-model.md`
-- 待主链产出后，按 [`docs/frontend/frontend-requirements.md`](docs/frontend/frontend-requirements.md) §10
-  「待回流清单」逐项吸收，随后**删除** `docs/frontend/`
+- 需求、模块、接口、数据模型、验收用例的**唯一事实来源仍在上表的主链**；
+  `webui/` 不复制契约正文，只在 `webui/src/types.ts` 中做类型映射，并逐条标注 `API-###`
+- 后端 `MOD-001` ~ `MOD-008` 尚未实现，因此 `webui/` 默认运行在开发期数据模式
+  （`src/api/fixtures.ts` + `mock.ts`，严格按数据模型口径产出）。
+  `REQ-019` / `AC-010` 要求不做演示数据版本，故这两个文件在接入真实后端后必须删除
+- 怎么跑、怎么自检见 [`webui/README.md`](webui/README.md)
 
-⚠️ 特别注意：原型使用 React + TS + Vite + Tailwind 实现，但按 `docs/README.md` §4，
-**技术选型属阶段 7a，需经提出者确认后才算决策**——请勿把原型的选型当作既成事实倒推 PRD。
