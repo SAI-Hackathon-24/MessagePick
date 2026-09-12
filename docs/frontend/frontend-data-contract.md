@@ -1,13 +1,20 @@
 # 接口契约清单（v0.1 · 可扩展草案）
 
-> **目的**：`raw_design.md` / PRD 未完成期间，先把「前端需要什么数据」这件事固定下来，
-> 让 core / utils 并行开发时不至于返工。**本文只是契约草案，不是最终协议。**
->
-> **三个层次的约定**：
-> 1. **底层数据**：来自 `wechat-cli` 的真实 JSON（已核对源码，见下）。
-> 2. **中间层**：本文件定义的领域对象（`src/types.ts`）。
-> 3. **扩展层**：所有对象都带 `ext?: Record<string, unknown>`，后端新增字段不会让前端报错。
+> **状态**: draft
+> **生成者**: 人工撰写（WebUI 原型阶段的先行草案，非本仓库流水线产物）
+> **上游**: `SAI-Hackathon-24/wechat-cli` 源码（字段契约）+ `webui/src/types.ts`
+> **下游**: 无（等 `docs/design/api-contract.md`、`docs/design/data-model.md` 生成后并入）
+> **变更中**: —
+> **最后更新**: 2026-09-12
 
+<!--
+本文件与 docs/README.md 的关系：
+- 本仓库的接口与数据模型契约应分别落在 `docs/design/api-contract.md` 与 `docs/design/data-model.md`
+  （ID 前缀 `API-###` / `DM-###`）。本文件是**原型先行**产物，用于让 WebUI 在前端侧先跑通。
+- 按 docs/README.md §8，契约层禁止写函数体/伪代码/框架名；本文件描述的是**传输层 JSON 结构**
+  与字段清单，不含实现，符合该约束。
+- 待阶段 3/4 产出后，本文件内容应被吸收并按 ID 体系改写，随后删除。
+-->
 ---
 
 ## 1. 已完成核对的底层接口（wechat-cli 源码级）

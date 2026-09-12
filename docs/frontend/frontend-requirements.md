@@ -1,9 +1,20 @@
-# 聊斋 MessagePick · 前端需求整理（v0.1 草案）
+# 聊斋 MessagePick · 前端需求整理（原型先行草案）
 
-> **来源与状态**：本文由《新-项目信息登记表 SAI 2026级新生黑客松AI挑战赛》与仓库根目录 `目标.md` 推导。
-> `目标.md` 的「正向社交和反向社交」章节为空，`docs/raw/raw_design.md` / `docs/product/prd.md` 尚未编写。
-> 因此凡是推导出来的内容都标注了「**待定稿**」，不以猜测替代决策。
+> **状态**: draft
+> **生成者**: 人工撰写（WebUI 原型阶段的先行草案，非本仓库流水线产物）
+> **上游**: `webui/` 原型实现 + 用户的语义澄清；**待回流**至 `docs/raw/raw_design.md`
+> **下游**: 无（等 `docs/product/prd.md` 进入 `reviewed` 后并入，本文件随即作废）
+> **变更中**: —
+> **最后更新**: 2026-09-12
 
+<!--
+本文件与 docs/README.md 的关系（务必先读 docs/README.md）：
+- docs/ 的唯一事实来源是主链 raw → prd → modules → api-contract/data-model → tasks → acceptance。
+  本文件**不是**该主链的产物，而是「先把界面做出来以验证需求」的原型阶段草案。
+- 主链全部文档当前均为 draft（见 docs/README.md §10），按 §6.3 门禁尚不可被下游消费。
+- 因此本文件刻意不复述 REQ-### / MOD-### 正文，只描述前端这一侧的界面与交互，
+  并在 §4 给出「待回流清单」，供阶段 1 的 PRD 吸收。等 PRD 定稿后本文件应删除。
+-->
 ---
 
 ## 0. 一句话定位
@@ -229,3 +240,24 @@ npm run test:e2e         # 真实浏览器点击驱动（17 项，需 dev server
 
 另修正一处数据口径问题：mock 的来源消息发送者原先从全局名字池抽取，
 会出现「人工智能班群的通知里冒出学生会宣传部的人」，已改为只取该群自己的成员。
+
+---
+
+## 10. 待回流清单（本文件 → 主链）
+
+本文件是原型先行产物。下列内容应在主链推进时被吸收，吸收后本文件删除：
+
+| # | 待回流内容 | 应落到 | 状态 |
+|---|---|---|---|
+| 1 | 三大功能的用户场景（§1 的 S1–S5） | `docs/product/prd.md` §1（`US-###`） | 待阶段 1 |
+| 2 | 功能边界（§2 的「做什么 / 明确不做什么」） | `docs/product/prd.md` §2（`REQ-###`） | 待阶段 1 |
+| 3 | 各页面的交互流程与异常分支（§4、§5） | `docs/product/prd.md` §3 | 待阶段 1 |
+| 4 | 数据口径（§6 的计数/生命周期/聚合规则） | `docs/product/prd.md` §4 + `docs/design/data-model.md`（`DM-###`） | 待阶段 1 / 4 |
+| 5 | 验收标准（§7 的 A1–A14） | `docs/plan/acceptance-tests.md`（`AC-###`），并可复用 `webui/scripts/e2e-probe.mjs` 的断言 | 待阶段 6 |
+| 6 | 前后端接口与字段（见 `frontend-data-contract.md`） | `docs/design/api-contract.md`（`API-###`）+ `data-model.md`（`DM-###`） | 待阶段 3 / 4 |
+| 7 | **技术选型（React + TS + Vite + Tailwind）** | `docs/design/impl/high-level-design.md` §6「关键决策」 | 待阶段 7a |
+| 8 | 前端「未完赛」的语义（§9 待定稿问题清单） | `docs/product/prd.md` §6「待确认」 | 待阶段 1 |
+
+> 其中第 7 项最需要注意：按 `docs/README.md` §4，**技术选型只能在阶段 7a 由提出者确认后写入**。
+> 原型已经用 React + TS + Vite + Tailwind 实现，属于「先行验证」，不等于已完成选型决策；
+> 请勿把它当作既成事实倒推 PRD。
