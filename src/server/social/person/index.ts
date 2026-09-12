@@ -2,14 +2,16 @@
  * 人的同步与身份合并（mod-007 §3.1「person/」、§5.1 DM-011；`REQ-006`、`REQ-082`、`AC-129`、`AC-130`）。
  *
  * 口径：
- * - 未确认映射时一人 = 一个群成员；**只有状态为「已确认」的候选映射**才把群成员合并到同一个人；
- * - 人的标识取成员标识的最小值（合并后仍稳定，派生记录按此键幂等写入）；
+ * - 归属（成员 → 人）由存储侧结构维护：默认一人 = 一个群成员；**只有状态为「已确认」的候选映射**
+ *   才把群成员合并到同一个人（反映在 `DM-004.person_id` 上，由存储侧执行）。
+ * - 本模块只做投影：按成员的归属分组得到人集合，不自行推导身份、不自行合并（避免与存储侧
+ *   生成两套人标识）。
  * - 「我」= 含带 Me 标识成员的唯一人（`REQ-006`）；未知标记由活跃度在阶段 2 判定。
  */
 
 import { DIMENSIONS, PERSONALITY_DIMENSIONS, type GroupMember, type IdentityCandidate, type Id, type Person } from '@shared'
 
-/** 同步输入：群成员身份（DM-004）与身份对齐候选（DM-012）。 */
+/** 同步输入：群成员身份（DM-004，含归属解析）与身份对齐候选（DM-012）。 */
 export interface PersonSyncInput {
   members: readonly GroupMember[]
   candidates: readonly IdentityCandidate[]
@@ -23,52 +25,21 @@ export interface PersonSyncResult {
   personByMember: Map<Id, Id>
 }
 
-/** 由群成员身份与已确认映射同步出人集合。 */
+/** 由群成员身份同步出人集合（归属以 `DM-004.person_id` 为准，§5.1）。 */
 export function syncPeople(input: PersonSyncInput): PersonSyncResult {
-  const parent = new Map<Id, Id>()
-  const find = (memberId: Id): Id => {
-    let root = memberId
-    while (parent.get(root) !== undefined && parent.get(root) !== root) {
-      root = parent.get(root) as Id
-    }
-    return root
-  }
-  const union = (left: Id, right: Id): void => {
-    const rootLeft = find(left)
-    const rootRight = find(right)
-    if (rootLeft === rootRight) return
-    // 取字典序小者为根：与「人标识 = 最小成员标识」一致。
-    if (rootLeft < rootRight) parent.set(rootRight, rootLeft)
-    else parent.set(rootLeft, rootRight)
-  }
-
+  const buckets = new Map<Id, GroupMember[]>()
   for (const member of input.members) {
-    if (!parent.has(member.memberId)) parent.set(member.memberId, member.memberId)
-  }
-  for (const candidate of input.candidates) {
-    if (candidate.status !== '已确认') continue
-    const [first, ...rest] = candidate.memberIds
-    if (first === undefined) continue
-    for (const memberId of rest) {
-      if (!parent.has(memberId)) parent.set(memberId, memberId)
-      if (!parent.has(first)) parent.set(first, first)
-      union(first, memberId)
-    }
-  }
-
-  const memberByRoot = new Map<Id, GroupMember[]>()
-  for (const member of input.members) {
-    const root = find(member.memberId)
-    const bucket = memberByRoot.get(root)
-    if (bucket === undefined) memberByRoot.set(root, [member])
+    // 归属解析：成员的 `DM-004.person_id`（默认一人 = 一个群成员；确认合并由存储侧生效）
+    const personId = member.personId === '' ? member.memberId : member.personId
+    const bucket = buckets.get(personId)
+    if (bucket === undefined) buckets.set(personId, [member])
     else bucket.push(member)
   }
 
   const persons: Person[] = []
   const personByMember = new Map<Id, Id>()
-  for (const [root, members] of memberByRoot) {
+  for (const [personId, members] of buckets) {
     const memberIds = members.map((member) => member.memberId).sort()
-    const personId = memberIds[0] ?? root
     persons.push({
       personId,
       memberIds,

@@ -199,6 +199,7 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
           stage: def.stage,
           code: envelope.code,
           scope: envelope.scope,
+          message: envelope.message,
         })
         stages.push({ stage: def.stage, name: def.name, status: 'failed', error: envelope })
         continue
@@ -216,6 +217,7 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
           stage: def.stage,
           code: envelope.code,
           scope: envelope.scope,
+          message: envelope.message,
           taskRef: first.taskRef,
         })
         stages.push({

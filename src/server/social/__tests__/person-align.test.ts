@@ -86,28 +86,32 @@ describe('人在同步（只有已确认映射才合并）', () => {
     expect(result.personByMember.get('m2')).toBe('m2')
   })
 
-  it('已确认候选合并：人标识 = 最小成员标识、成员集合跨群、映射一致', () => {
-    const result = syncPeople({
-      members,
-      candidates: [candidate('c1', ['m2', 'm1'], '已确认')],
-    })
+  it('存储侧确认合并后：归属一致的人合并为一个（成员集合跨群、映射一致）', () => {
+    const mergedMembers = [
+      member('m1', 'g1', '小明', { personId: 'person:g1:m1' }),
+      member('m2', 'g2', '小明', { personId: 'person:g1:m1' }),
+      member('m3', 'g1', '小红'),
+    ]
+    const result = syncPeople({ members: mergedMembers, candidates: [] })
 
     expect(result.persons).toHaveLength(2)
-    const merged = result.persons.find((person) => person.personId === 'm1') as Person
+    const merged = result.persons.find((person) => person.personId === 'person:g1:m1') as Person
     expect(merged.memberIds).toEqual(['m1', 'm2'])
-    expect(result.personByMember.get('m1')).toBe('m1')
-    expect(result.personByMember.get('m2')).toBe('m1')
+    expect(result.personByMember.get('m1')).toBe('person:g1:m1')
+    expect(result.personByMember.get('m2')).toBe('person:g1:m1')
 
     // 活跃度口径的成员基础：该人涉及的群 = 两个群（跨群合并到人）
-    const memberById = new Map(members.map((row) => [row.memberId, row]))
+    const memberById = new Map(mergedMembers.map((row) => [row.memberId, row]))
     expect([...groupsOf(merged, memberById)].sort()).toEqual(['g1', 'g2'])
   })
 
-  it('传递合并：两条确认候选经中间成员合并为一个人', () => {
-    const result = syncPeople({
-      members,
-      candidates: [candidate('c1', ['m1', 'm2'], '已确认'), candidate('c2', ['m2', 'm3'], '已确认')],
-    })
+  it('传递合并：三行成员归属同一个人（中间成员已由存储侧重指）', () => {
+    const mergedMembers = [
+      member('m1', 'g1', '小明', { personId: 'person:g1:m1' }),
+      member('m2', 'g2', '小明', { personId: 'person:g1:m1' }),
+      member('m3', 'g1', '小红', { personId: 'person:g1:m1' }),
+    ]
+    const result = syncPeople({ members: mergedMembers, candidates: [] })
 
     expect(result.persons).toHaveLength(1)
     expect(result.persons[0]?.memberIds).toEqual(['m1', 'm2', 'm3'])
@@ -115,17 +119,14 @@ describe('人在同步（只有已确认映射才合并）', () => {
 
   it('「我」= 含 Me 标识成员的人；合并后仍为真', () => {
     const withMe = [
-      member('me', 'g1', '我', { isMe: true }),
-      member('me2', 'g2', '小明'),
+      member('me', 'g1', '我', { isMe: true, personId: 'person:g1:me' }),
+      member('me2', 'g2', '小明', { personId: 'person:g1:me' }),
     ]
-    const result = syncPeople({
-      members: withMe,
-      candidates: [candidate('c1', ['me', 'me2'], '已确认')],
-    })
+    const result = syncPeople({ members: withMe, candidates: [] })
 
     expect(result.persons).toHaveLength(1)
     expect(result.persons[0]?.isMe).toBe(true)
-    expect(findMe(result.persons)?.personId).toBe('me')
+    expect(findMe(result.persons)?.personId).toBe('person:g1:me')
   })
 
   it('同步产物不推断：活跃度 / 回复时长 / 性格分均为零值基线（等阶段 2 覆写）', () => {
@@ -322,20 +323,24 @@ describe('候选生成与结论提交（REQ-082）', () => {
     expect(applyDecision(draft, '否定', T0)).toMatchObject({ status: '已否定', confirmedAt: null })
   })
 
-  it('集成：确认结论进入人在同步后合并生效；未确认结论不生效', () => {
+  it('集成：确认结论的合并在存储侧归属上生效（未确认与已否定不合并）', () => {
     const members = [member('m1', 'g1', '张三'), member('m2', 'g2', '张三')]
     const drafts = generateCandidates({ members, contacts: [zhang] })
     const draft = drafts[0]
     if (draft === undefined) throw new Error('期望生成身份对齐候选')
 
-    // 未确认：不合并
+    // 未确认：默认归属（一人 = 一个群成员），不合并
     const pending = syncPeople({ members, candidates: [draft] })
     expect(pending.persons).toHaveLength(2)
 
-    // 确认：合并为同一人
-    const confirmed = syncPeople({ members, candidates: [applyDecision(draft, '确认', T0)] })
+    // 存储侧确认合并后：成员归属被重指到同一人（person_id 已一致）
+    const mergedMembers = [
+      member('m1', 'g1', '张三', { personId: 'person:g1:m1' }),
+      member('m2', 'g2', '张三', { personId: 'person:g1:m1' }),
+    ]
+    const confirmed = syncPeople({ members: mergedMembers, candidates: [applyDecision(draft, '确认', T0)] })
     expect(confirmed.persons).toHaveLength(1)
-    expect(confirmed.personByMember.get('m2')).toBe('m1')
+    expect(confirmed.personByMember.get('m2')).toBe('person:g1:m1')
 
     // 否定：不合并
     const rejected = syncPeople({ members, candidates: [applyDecision(draft, '否定', T0)] })
