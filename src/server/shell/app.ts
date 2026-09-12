@@ -1087,10 +1087,28 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       },
     )
 
-    // MOD-007：无入参取数预热（触发该模块的懒构建与缓存），两条都是读路径
+    /**
+     * MOD-007：无入参取数预热（触发该模块的懒构建与缓存），两条都是读路径。
+     *
+     * ⚠️ 需要重试：该模块的**索引快照在构建阶段 8 才物化**，而预热与构建几乎同时发起
+     * （实测构建开始 573 ms 后就调用 `API-023`）→ 快照还没建立，`me()` 为空 →
+     * `IDENTITY_NOT_READY`。这不是真失败，等构建收敛即可。
+     * 只对 `IDENTITY_NOT_READY` 重试；其余错误立即收敛，避免掩盖真实问题。
+     */
     warm(
       'MOD-007',
-      () => Promise.all([social.getMyAffinity(), social.listIdentityCandidates()]),
+      async () => {
+        const delays = [1_500, 3_000, 5_000, 8_000]
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            return await Promise.all([social.getMyAffinity(), social.listIdentityCandidates()])
+          } catch (error) {
+            const code = (error as { code?: string }).code
+            if (code !== 'IDENTITY_NOT_READY' || attempt >= delays.length) throw error
+            await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
+          }
+        }
+      },
       () => ({ state: 'succeeded' }),
     )
   }
