@@ -189,6 +189,8 @@ export interface OperationSnapshot {
   scope: string;
   state: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
   counts: { done: number; total?: number };
+  /** 进行中的阶段提示（如 识别 / 抽取；提示性旁路）。 */
+  phase?: string;
   error?: { code: string; message: string };
   startedAt: number;
   updatedAt: number;

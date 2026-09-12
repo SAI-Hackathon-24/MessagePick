@@ -135,6 +135,8 @@ export interface ShellOperation {
   scope: string
   state: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
   counts: { done: number; total?: number }
+  /** 进行中的阶段提示（如 识别 / 抽取；提示性旁路，仅分析类操作使用）。 */
+  phase?: string
   error?: ErrorEnvelope
   startedAt: number
   updatedAt: number
@@ -364,11 +366,27 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   })
 
   // 端口装配（设计落点 `ports/*`）：只经各模块出口调用，模块之间不互相引用
+  const tracker = createOperationTracker(clock)
+  /** 提取阶段进度目标（groupId → 进行中的提取操作集合；提示性旁路，不参与业务口径）。 */
+  const extractProgressTargets = new Map<string, Set<string>>()
   const ownsStore = options.ports?.store === undefined
   const store = options.ports?.store ?? createStore({ dataDir, clock, logger })
   const ingest =
     options.ports?.ingest ?? createIngestModule({ store, clock, logger, config: ingestConfigOf(config) })
-  const extract = options.ports?.extract ?? createExtractModule({ store, clock, logger })
+  const extract =
+    options.ports?.extract ??
+    createExtractModule({
+      store,
+      clock,
+      logger,
+      onProgress: (info) => {
+        const targets = extractProgressTargets.get(info.groupId)
+        if (targets === undefined) return
+        for (const opId of targets) {
+          tracker.update(opId, { phase: info.stage, counts: { done: info.done, total: info.total } })
+        }
+      },
+    })
   const meme = options.ports?.meme ?? createMemeModule({ store, clock, logger })
   const social = options.ports?.social ?? createSocialPort(store, logger)
   const ports: ShellPorts = {
@@ -389,7 +407,6 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
 
   const boundPort = { value: options.port ?? config.server.port }
   const requestIds = new WeakMap<object, string>()
-  const tracker = createOperationTracker(clock)
 
   const metaOf: MetaOf = (req) => ({
     epoch: currentEpoch(store),
@@ -1243,7 +1260,16 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       try {
         const handle = meme.startBatch(cause, groupIds === null ? {} : { groupIds })
         tracker.update(memeOp, { state: 'running' })
-        const result = await handle.done
+        /* 分项进度（提示性旁路）：分项一次规划、逐项执行；轮询句柄快照折算 done/total */
+        const progressTimer = setInterval(() => {
+          const items = handle.items()
+          if (items.length === 0) return
+          const settled = items.filter((item) => item.status === 'succeeded' || item.status === 'failed').length
+          const active = items.find((item) => item.status === 'queued' || item.status === 'running') ?? items[items.length - 1]
+          if (active === undefined) return
+          tracker.update(memeOp, { phase: active.kind, counts: { done: settled, total: items.length } })
+        }, 3_000)
+        const result = await handle.done.finally(() => clearInterval(progressTimer))
         const done = result.items.filter((item) => item.status === 'succeeded').length
         logger.info?.('analysis.meme.result', {
           scope: scopeLabel,
@@ -1274,7 +1300,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     const extractRun = (async () => {
       try {
         tracker.update(extractOp, { state: 'running' })
-        const result = groupIds === null ? await extract.run() : await runExtractForGroups(groupIds)
+        const result = groupIds === null ? await extract.run() : await runExtractForGroups(groupIds, extractOp)
         logger.info?.('analysis.extract.result', {
           scope: scopeLabel,
           status: result.status,
@@ -1304,33 +1330,48 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     await Promise.all([memeRun, extractRun])
   }
 
-  /** 逐群提取（按群分析）：每群按全历史窗口重跑该群分片，聚合计数与失败。 */
-  async function runExtractForGroups(groupIds: readonly string[]): Promise<ExtractRunResult> {
-    const upper = clock()
-    const window = { from: 0, to: upper }
-    const failures: ExtractRunResult['failures'][number][] = []
-    let last: ExtractRunResult | null = null
-    let messages = 0
-    let recognized = 0
-    let written = 0
-    let extracted = 0
-    let failedTasks = 0
+  /** 逐群提取（按群分析）：每群按全历史窗口重跑该群分片，聚合计数与失败；`opId` 供阶段进度归属。 */
+  async function runExtractForGroups(groupIds: readonly string[], opId: string): Promise<ExtractRunResult> {
+    /* 进度目标登记（提示性旁路）：模块按 groupId 汇报阶段进度，结算后注销 */
     for (const groupId of groupIds) {
-      const result = await extract.retry({ groupId, window })
-      last = result
-      messages += result.counts.messages
-      recognized += result.counts.recognized
-      written += result.counts.written
-      extracted += result.counts.extracted
-      failedTasks += result.counts.failedTasks
-      failures.push(...result.failures)
+      const targets = extractProgressTargets.get(groupId) ?? new Set<string>()
+      targets.add(opId)
+      extractProgressTargets.set(groupId, targets)
     }
-    const status: ExtractRunResult['status'] = failedTasks === 0 ? 'succeeded' : written > 0 || extracted > 0 ? 'partial' : 'failed'
-    return {
-      status,
-      counts: { groups: groupIds.length, messages, recognized, extracted, written, failedTasks },
-      failures,
-      window: last?.window ?? window,
+    try {
+      const upper = clock()
+      const window = { from: 0, to: upper }
+      const failures: ExtractRunResult['failures'][number][] = []
+      let last: ExtractRunResult | null = null
+      let messages = 0
+      let recognized = 0
+      let written = 0
+      let extracted = 0
+      let failedTasks = 0
+      for (const groupId of groupIds) {
+        const result = await extract.retry({ groupId, window })
+        last = result
+        messages += result.counts.messages
+        recognized += result.counts.recognized
+        written += result.counts.written
+        extracted += result.counts.extracted
+        failedTasks += result.counts.failedTasks
+        failures.push(...result.failures)
+      }
+      const status: ExtractRunResult['status'] = failedTasks === 0 ? 'succeeded' : written > 0 || extracted > 0 ? 'partial' : 'failed'
+      return {
+        status,
+        counts: { groups: groupIds.length, messages, recognized, extracted, written, failedTasks },
+        failures,
+        window: last?.window ?? window,
+      }
+    } finally {
+      for (const groupId of groupIds) {
+        const targets = extractProgressTargets.get(groupId)
+        if (targets === undefined) continue
+        targets.delete(opId)
+        if (targets.size === 0) extractProgressTargets.delete(groupId)
+      }
     }
   }
 

@@ -81,6 +81,14 @@ export interface GroupScope {
   window?: ExtractWindow
 }
 
+/** 阶段进度（提示性旁路；按群汇报，供外壳展示操作进度，不参与业务口径）。 */
+export interface ExtractProgressInfo {
+  groupId: Id
+  stage: '识别' | '抽取' | '聚类' | '写入'
+  done: number
+  total: number
+}
+
 /** 管线可注入项（测试注入替身：不真调模型、不真开库）。 */
 export interface ExtractPipelineOptions {
   repository: EntryRepository
@@ -89,6 +97,8 @@ export interface ExtractPipelineOptions {
   logger?: ExtractLogger
   /** 失败任务记录容量（LRU；供 `API-008` 重试归属，默认 200）。 */
   failureCapacity?: number
+  /** 阶段进度汇报（可选；提示性旁路，异常不影响批次）。 */
+  onProgress?: (info: ExtractProgressInfo) => void
 }
 
 /** 清洗后的登记项：条目 + 主题。 */
@@ -125,6 +135,7 @@ export class ExtractPipeline {
   readonly #clock: () => number
   readonly #logger: ExtractLogger
   readonly #failureCapacity: number
+  readonly #onProgress: ((info: ExtractProgressInfo) => void) | undefined
 
   /** 串行链：`run` 与 `retry` 共用，同一时刻只跑一个批次 / 分项重试单元。 */
   #lock: Promise<unknown> = Promise.resolve()
@@ -145,6 +156,7 @@ export class ExtractPipeline {
     this.#clock = options.clock ?? Date.now
     this.#logger = options.logger ?? {}
     this.#failureCapacity = Math.max(1, options.failureCapacity ?? 200)
+    this.#onProgress = options.onProgress
   }
 
   /** 本进程最近一次批次窗口（无则 null）。 */
@@ -248,7 +260,7 @@ export class ExtractPipeline {
     return { status, counts, failures, window }
   }
 
-  /** 群分片：识别（按输入单元上限切片）→ 逐条抽取。 */
+  /** 群分片：识别（按输入单元上限切片）→ 逐条抽取；同步汇报阶段进度。 */
   async #processGroup(
     groupId: Id,
     messages: readonly RawMessage[],
@@ -258,64 +270,85 @@ export class ExtractPipeline {
     counts: BatchCounts,
   ): Promise<void> {
     const ordered = sortBySentAt(messages)
-    for (const slice of chunkUnits(ordered, MAX_UNITS_PER_TASK)) {
+    const slices = chunkUnits(ordered, MAX_UNITS_PER_TASK)
+    let sliceDone = 0
+    let recognizedCum = 0
+    let extractedCum = 0
+    this.#report(groupId, '识别', 0, slices.length)
+    for (const slice of slices) {
       const outcome = await this.#runTask(buildRecognitionRequest(slice))
       if (!outcome.ok) {
         failures.push(failureFromEnvelope(outcome.error, groupId))
         this.#rememberFailed(taskRefOf(outcome.error), { stage: '识别', groupId, window, messages: slice })
+        sliceDone += 1
+        this.#report(groupId, '识别', sliceDone, slices.length)
         continue
       }
       const items = parseRecognizedItems(outcome.result.items, slice)
       counts.recognized += items.length
-      drafts.push(...(await this.#extractItems(groupId, slice, items, window, failures)))
+      recognizedCum += items.length
+      sliceDone += 1
+      this.#report(groupId, '识别', sliceDone, slices.length)
+      if (items.length > 0) this.#report(groupId, '抽取', extractedCum, recognizedCum)
+      drafts.push(
+        ...(await this.#extractItems(groupId, slice, items, window, failures, () => {
+          extractedCum += 1
+          this.#report(groupId, '抽取', extractedCum, recognizedCum)
+        })),
+      )
     }
   }
 
-  /** 识别结果 → 抽取草稿（并发发起；单条失败不影响同组其余条目）。 */
+  /** 识别结果 → 抽取草稿（并发发起；单条失败不影响同组其余条目；`onItemDone` 仅报进度）。 */
   async #extractItems(
     groupId: Id,
     messages: readonly RawMessage[],
     items: readonly RecognizedItem[],
     window: ExtractWindow,
     failures: ExtractBatchFailure[],
+    onItemDone?: () => void,
   ): Promise<ExtractedDraft[]> {
     if (items.length === 0) return []
     const byId = new Map(messages.map((message) => [message.messageId, message]))
     const members = new MemberNameIndex(this.#repository.readMembers(groupId))
     const results = await Promise.all(
       items.map(async (item): Promise<ExtractedDraft | null> => {
-        const sources = item.sourceMessageIds
-          .map((messageId) => byId.get(messageId))
-          .filter((message): message is RawMessage => message !== undefined)
-        const outcome = await this.#runTask(buildExtractionRequest(item.recognitionType, sources))
-        if (!outcome.ok) {
-          failures.push(failureFromEnvelope(outcome.error, groupId))
-          this.#rememberFailed(taskRefOf(outcome.error), {
-            stage: '抽取',
+        try {
+          const sources = item.sourceMessageIds
+            .map((messageId) => byId.get(messageId))
+            .filter((message): message is RawMessage => message !== undefined)
+          const outcome = await this.#runTask(buildExtractionRequest(item.recognitionType, sources))
+          if (!outcome.ok) {
+            failures.push(failureFromEnvelope(outcome.error, groupId))
+            this.#rememberFailed(taskRefOf(outcome.error), {
+              stage: '抽取',
+              groupId,
+              window,
+              messages: sources,
+              recognitionType: item.recognitionType,
+              sourceMessageIds: item.sourceMessageIds,
+            })
+            return null
+          }
+          const draft = parseExtractedDraft(outcome.result.items[0] ?? {}, {
             groupId,
-            window,
-            messages: sources,
             recognitionType: item.recognitionType,
             sourceMessageIds: item.sourceMessageIds,
+            members,
           })
-          return null
+          if (draft === null) {
+            failures.push({
+              group: groupId,
+              code: 'ANALYSIS_FAILED',
+              taskRef: outcome.taskRef,
+              reason: '抽取结果缺少必填字段（headline / aiSummary）',
+            })
+            return null
+          }
+          return { ...draft, entryId: draft.entryId || buildEntryId(groupId, item.recognitionType, item.sourceMessageIds) }
+        } finally {
+          onItemDone?.()
         }
-        const draft = parseExtractedDraft(outcome.result.items[0] ?? {}, {
-          groupId,
-          recognitionType: item.recognitionType,
-          sourceMessageIds: item.sourceMessageIds,
-          members,
-        })
-        if (draft === null) {
-          failures.push({
-            group: groupId,
-            code: 'ANALYSIS_FAILED',
-            taskRef: outcome.taskRef,
-            reason: '抽取结果缺少必填字段（headline / aiSummary）',
-          })
-          return null
-        }
-        return { ...draft, entryId: draft.entryId || buildEntryId(groupId, item.recognitionType, item.sourceMessageIds) }
       }),
     )
     return results.filter((draft): draft is ExtractedDraft => draft !== null)
@@ -539,6 +572,16 @@ export class ExtractPipeline {
       return await this.#gateway.retry(ref)
     } catch (error) {
       return { ok: false, error: unknownErrorEnvelope(error) }
+    }
+  }
+
+  /** 阶段进度汇报（旁路：未接线或异常时静默，不影响批次）。 */
+  #report(groupId: Id, stage: ExtractProgressInfo['stage'], done: number, total: number): void {
+    if (this.#onProgress === undefined) return
+    try {
+      this.#onProgress({ groupId, stage, done, total })
+    } catch {
+      // 提示性旁路
     }
   }
 

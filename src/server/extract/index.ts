@@ -30,7 +30,7 @@ import {
 } from './edit/entry-edit'
 import type { ExtractLogger } from './errors'
 import { ExtractPipeline } from './pipeline/extract-pipeline'
-import type { BatchResult, GroupScope } from './pipeline/extract-pipeline'
+import type { BatchResult, ExtractProgressInfo, GroupScope } from './pipeline/extract-pipeline'
 import type { TaskGateway } from './pipeline/recognition'
 import type { ExtractWindow } from './pipeline/watermark'
 import { queryEntries, type EntryListPage, type EntryQueryInput } from './query/entry-query'
@@ -131,6 +131,8 @@ export interface ExtractModuleOptions {
   logger?: ExtractLogger
   /** 失败任务记录容量（LRU；供 `API-008` 重试归属，默认 200）。 */
   failureCapacity?: number
+  /** 阶段进度汇报（可选；提示性旁路，异常不影响批次）。 */
+  onProgress?: (info: ExtractProgressInfo) => void
 }
 
 /** 模块出口（`MOD-004` 只依赖这些成员；签名与 §3.3 一致：6 条 API + 管线 `run` / `retry`）。 */
@@ -162,6 +164,7 @@ export function createExtractModule(options: ExtractModuleOptions): ExtractModul
     clock: options.clock,
     logger: options.logger,
     failureCapacity: options.failureCapacity,
+    onProgress: options.onProgress,
   })
   const editOptions: EntryEditOptions = {
     ...(options.clock === undefined ? {} : { clock: options.clock }),

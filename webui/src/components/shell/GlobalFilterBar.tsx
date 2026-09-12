@@ -25,6 +25,7 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
   const [watchingAnalysis, setWatchingAnalysis] = useState(false);
   const [analysisChip, setAnalysisChip] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
   const [analysisDetail, setAnalysisDetail] = useState('');
+  const [analysisProgress, setAnalysisProgress] = useState('');
   const groupRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef<HTMLDivElement>(null);
   const identityRef = useRef<HTMLDivElement>(null);
@@ -100,6 +101,19 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         sawRunning = true;
         for (const op of running) observed.add(op.id);
         setAnalysisDetail([...new Set(running.map((op) => op.scope))].join(' · '));
+        /* 进度摘要：折算「梗·识别 3/14」式段位（无分母的操作不显示）；相同段位去重 */
+        const segments = [
+          ...new Set(
+            running.flatMap((op) => {
+              if (op.counts.total === undefined || op.counts.total === 0) return [];
+              const short = op.scope.includes('梗') ? '梗' : op.scope.includes('信息') ? '提取' : op.scope;
+              return [`${short}${op.phase === undefined ? '' : `·${op.phase}`} ${op.counts.done}/${op.counts.total}`];
+            }),
+          ),
+        ];
+        const earliest = Math.min(...running.map((op) => op.startedAt));
+        const minutes = Math.floor((Date.now() - earliest) / 60_000);
+        setAnalysisProgress([...segments, ...(minutes >= 1 ? [`已 ${minutes} 分`] : [])].join(' · '));
         setAnalysisChip('running');
         timer = window.setTimeout(() => void poll(), 2_000);
         return;
@@ -332,7 +346,7 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
                 : '后台分析有失败分片；可再次点击「分析」重试'
           }
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium',
+            'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium tabular-nums',
             analysisChip === 'running' && 'border-amber-500/30 bg-amber-500/10 text-amber-700',
             analysisChip === 'done' && 'border-jade-500/30 bg-jade-500/10 text-jade-700',
             analysisChip === 'failed' && 'border-coral-500/30 bg-coral-500/10 text-coral-600',
@@ -341,7 +355,11 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
           {analysisChip === 'running' && <Loader2 size={13} className="animate-spin" />}
           {analysisChip === 'done' && <CheckCircle2 size={13} />}
           {analysisChip === 'failed' && <AlertTriangle size={13} />}
-          {analysisChip === 'running' ? '分析中…' : analysisChip === 'done' ? '分析完成' : '分析有失败'}
+          {analysisChip === 'running'
+            ? `分析中…${analysisProgress.length > 0 ? ` ${analysisProgress}` : ''}`
+            : analysisChip === 'done'
+              ? '分析完成'
+              : '分析有失败'}
         </span>
       )}
       {analyzeMsg && (
