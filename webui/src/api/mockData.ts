@@ -4,7 +4,22 @@
  * 真实接入时：把 `src/api/mock.ts` 里的函数换成 HTTP/MCP 调用即可，
  * 组件层完全不用改（见 src/api/index.ts 的说明）。
  */
-import type { ChatMember, ChatMessageType, ChatSession, MemeCard, MemeCategory, NoticeCategory, NoticeItem, NoticePriority, NoticeStatus, OverviewStats, PersonalityProfile, ReverseSignal, MatchResult } from '@/types';
+import type {
+  ChatMember,
+  ChatMessageType,
+  ChatSession,
+  FriendshipPotential,
+  MemeCard,
+  MemeCategory,
+  NoticeCategory,
+  NoticeItem,
+  NoticePriority,
+  NoticeStatus,
+  OverviewStats,
+  PersonalityProfile,
+  RelationshipSummary,
+  SharedMemory,
+} from '@/types';
 
 /* ---------------- 种子随机 ---------------- */
 function makeRng(seed: number) {
@@ -35,6 +50,16 @@ const dayOffsetToIso = (dayOffset: number, hour = 12, minute = 0) => {
   d.setHours(hour, minute, 0, 0);
   return d.toISOString();
 };
+/** ISO 字符串 → { offset, hour, minute }，便于复用下面的局部时间格式函数 */
+const splitIso = (iso: string) => {
+  const d = new Date(iso);
+  return {
+    offset: Math.round((d.getTime() - RANGE_START.getTime()) / 86400000),
+    hour: d.getHours(),
+    minute: d.getMinutes(),
+  };
+};
+
 const fmtMD = (dayOffset: number, hour = 12, minute = 0) => {
   const d = new Date(RANGE_START.getTime());
   d.setDate(d.getDate() + dayOffset);
@@ -667,39 +692,158 @@ export const PROFILES: PersonalityProfile[] = GROUPS[0].members.map((name, i) =>
   };
 });
 
-export const MATCHES: MatchResult[] = Array.from({ length: 6 }, (_, i) => {
-  const [a, b] = pickN(PROFILES, 2);
-  return {
-    id: `match_${i + 1}`,
-    a: { name: a.name, username: a.username },
-    b: { name: b.name, username: b.username },
-    score: int(58, 97),
-    reasons: pickN(
-      [
-        '都在 23 点之后活跃，属于同一批夜猫',
-        '常用梗高度重叠，评论区互相接得住',
-        '都偏好短句 + 表情收尾的表达节奏',
-        '话题偏好都集中在技术与比赛',
-        '对同一条通知的反应时间都在 3 分钟内',
-        '都爱用括号做补充说明，语言习惯近似',
+/* -------------------------------------------------------------------------- */
+/* 功能三 · 正向社交：已经熟识的人之间做了什么（关系总结）                        */
+/* -------------------------------------------------------------------------- */
+
+const RELATION_TAGS = ['并肩作战的队友', '夜宵搭子', '技术互助', '吐槽搭子', '互相接梗的人', '一起熬过 DDL 的人', '长期潜水互不打扰'];
+
+/** 共同经历的模板池：{chat} 与 {term} 会被替换 */
+const MEMORY_TEMPLATES: { kind: SharedMemory['kind']; text: string }[] = [
+  { kind: 'sprint', text: '一起把「{term}」相关的模块赶在提交前做完，最后一晚在 {chat} 同步到凌晨两点' },
+  { kind: 'activity', text: '约过一次线下奶茶，边喝边把路演 PPT 从 3 版砍到 1 版' },
+  { kind: 'help', text: '你卡在数据解密那一步，对方翻了半小时日志帮你定位到路径问题' },
+  { kind: 'chat', text: '在 {chat} 从甲方需求聊到各自高中的机房，聊了将近两小时' },
+  { kind: 'celebration', text: '看到对方刷题榜第一，在群里刷了一整屏「{term}」庆祝' },
+  { kind: 'activity', text: '羽毛球局凑不齐人的时候，两个人硬着头皮打了两个小时' },
+  { kind: 'help', text: '连续三天帮忙占图书馆研讨间，最后一天还带了早饭' },
+  { kind: 'chat', text: '深夜一起吐槽了一次评审意见，第二天又各自默默改了稿' },
+];
+
+const MEMORY_HEADLINES = [
+  '通宵改完词云模块',
+  '把路演稿砍到 3 分钟',
+  '一起定位解密路径问题',
+  '深夜两小时长谈',
+  '刷屏庆祝刷题榜第一',
+  '两个人打的羽毛球局',
+  '连占三天研讨间',
+  '互相吐槽评审意见',
+];
+
+export const RELATIONSHIPS: RelationshipSummary[] = GROUPS[0].members.slice(0, 8).map((name, i) => {
+  const memories = Array.from({ length: int(3, 5) }, (_, k) => {
+    const tpl = MEMORY_TEMPLATES[(i + k) % MEMORY_TEMPLATES.length];
+    const day = int(4, 88);
+    return {
+      id: `mem_${i}_${k}`,
+      headline: MEMORY_HEADLINES[(i + k) % MEMORY_HEADLINES.length],
+      chat: pick([GROUPS[0].chat, GROUPS[3].chat, GROUPS[1].chat]),
+      happened_at: dayOffsetToIso(day, int(9, 23), pick([0, 15, 30, 45])),
+      kind: tpl.kind,
+      participants: pickN(NAME_POOL, int(2, 4)),
+      highlights: [
+        { sender: name, text: pick(['那就这么定了，我今晚先把接口留出来', '这个我来吧，你先睡', '哈哈哈哈行，明天再说', '别急，我看看日志']), time: fmtMD(day, int(9, 23), int(0, 59)) },
+        { sender: '我', text: pick(['好，那我来搞前端那部分', '收到，我明天早上同步给你', '服了，这个 bug 找了一小时', '那先按这个方案走']), time: fmtMD(day, int(9, 23), int(0, 59)) },
       ],
-      3,
-    ),
-    icebreakers: pickN(
-      ['可以从最近那个表情包聊起', '一起组队打下一场训练赛', '约一次线下奶茶，聊路演 PPT', '把「已阅」梗做成联名表情包'],
+    };
+  }).map((m, k) => {
+    const tpl = MEMORY_TEMPLATES[(i + k) % MEMORY_TEMPLATES.length];
+    return { ...m, headline: m.headline, ext: { raw_template: tpl.text.replace('{term}', pick(MEMES).term).replace('{chat}', m.chat) } };
+  });
+
+  return {
+    id: `rel_${i + 1}`,
+    person: { name, username: `wxid_${encodeURIComponent(name)}_${i}`, avatar: name.slice(0, 1) },
+    viewer: { name: '我', username: 'wxid_self' },
+    relation_tags: pickN(RELATION_TAGS, 2),
+    one_liner: pick([
+      '项目里最常一起扛事的人，聊技术也聊废话。',
+      '不用寒暄就能直接进入正题的关系。',
+      '平时各忙各的，但一到 DDL 就自动组队。',
+      '群里互相拆台，私聊互相补台。',
+    ]),
+    narrative: `近 90 天里，你们在 ${int(2, 5)} 个群中有过 ${int(180, 1400)} 条往来消息，主要集中在${pick(['项目开发', '比赛准备', '课程作业', '活动组织'])}上；${pick(['你更常先开口', '对方更常先开口', '双方开口比例接近'])}，平均 ${int(3, 40)} 分钟内会回复对方。` +
+      `共同经历里有 ${memories.length} 件事被对话记录了下来，最近一次是 ${(() => { const t = splitIso(memories[0].happened_at); return fmtMD(t.offset, t.hour, t.minute); })()}。`,
+    interaction: {
+      message_count: int(180, 1400),
+      initiator_ratio: Number((rng() * 0.6 + 0.2).toFixed(2)),
+      avg_reply_minutes: int(1, 45),
+      last_interaction: memories[0].happened_at,
+      shared_chats: int(1, 4),
+    },
+    shared_memories: memories,
+    shared_topics: pickN(['黑客松', '算法训练', '表情包', '夜宵', '路演准备', '课业', '游戏', '羽毛球'], 4),
+    vibe: { positivity: Number((rng() * 0.4 + 0.5).toFixed(2)), label: pick(['互相吐槽但很稳', '轻松不客套', '关键时刻靠得住', '玩笑多但正事不掉链子']) },
+    rhythm: Array.from({ length: 12 }, (_, w) => ({ bucket: `第${w + 1}周`, count: int(2, 90) })),
+    suggestions: pickN(
+      [
+        '可以把最近一次没聊完的话题接着聊下去',
+        '对方最近在准备比赛，可以主动问一句进展',
+        '试着把线上协作搬到线下，约一次饭',
+        '把这周的共同经历记一条到群文化里',
+      ],
       2,
     ),
-    shared_topics: pickN(['黑客松', '算法训练', '表情包', '夜宵', '路演准备', '摸鱼文学'], 3),
+    confidence: Number((0.72 + rng() * 0.26).toFixed(2)),
   };
 });
 
-export const REVERSE_SIGNALS: ReverseSignal[] = [
-  { id: 'rev_1', name: '许亦舟', username: 'wxid_xuyz', kind: 'low_response', label: '回复间隔偏长', detail: '被 @ 后平均 6.2 小时才回应，重要通知容易在他这里断链。', severity: 0.72, suggestion: '重要事项建议单聊或电话二次触达。' },
-  { id: 'rev_2', name: '白露', username: 'wxid_bailu', kind: 'topic_mismatch', label: '话题重合度低', detail: '与你的高频话题重合度仅 12%，共同话题集中在少量活动通知上。', severity: 0.55, suggestion: '可从共同活动切入，避免直接聊技术细节。' },
-  { id: 'rev_3', name: '段灼', username: 'wxid_duanzhuo', kind: 'style_clash', label: '表达风格冲突', detail: '你偏好短句，他偏好长段落，连续对话时容易产生「没看完」的误解。', severity: 0.48, suggestion: '重要结论建议用条目拆分后再发。' },
-  { id: 'rev_4', name: '崔听雨', username: 'wxid_cty', kind: 'cold_thread', label: '话题易冷场', detail: '近 30 天有 7 次由他发起的话题在 3 条内停止，缺乏接梗者。', severity: 0.61, suggestion: '可以在他发起话题后主动接一句，提升群内活跃度。' },
-  { id: 'rev_5', name: '严既明', username: 'wxid_yjm', kind: 'other', label: '数据量不足', detail: '该成员近 90 天发言 12 条，画像置信度低，仅供参考。', severity: 0.3, suggestion: '扩大分析时间范围或选择更活跃的群。' },
+/* -------------------------------------------------------------------------- */
+/* 功能三 · 反向社交：非熟人 + 相似兴趣 → 交友潜力                                */
+/* -------------------------------------------------------------------------- */
+
+/** 相似度维度池（维度可扩展，前端按列表渲染） */
+const AXIS_POOL: { key: string; label: string; evidence: string }[] = [
+  { key: 'interest', label: '兴趣重合', evidence: '聊过同一批冷门爱好' },
+  { key: 'topic', label: '话题偏好', evidence: '高频词重合度高' },
+  { key: 'rhythm', label: '活跃时段', evidence: '都在深夜出没' },
+  { key: 'style', label: '表达风格', evidence: '都偏好短句 + 表情收尾' },
+  { key: 'value', label: '关注议题', evidence: '对同一类议题反应积极' },
+  { key: 'pace', label: '回复节奏', evidence: '回复间隔分布接近' },
 ];
+
+const INTEREST_POOL = ['独立游戏', '摄影', '算法竞赛', '黑胶唱片', '爬虫与数据', '长跑', '科幻小说', '手冲咖啡', '羽毛球', '表情包制作', '前端动效', '大模型应用'];
+
+export const POTENTIALS: FriendshipPotential[] = pickN(NAME_POOL.slice(8), 6).map((name, i) => {
+  const axes = pickN(AXIS_POOL, 4).map((a) => {
+    const mine = int(35, 95);
+    const theirs = int(35, 95);
+    return { ...a, mine, theirs, similarity: Math.max(20, 100 - Math.abs(mine - theirs) + int(-6, 6)) };
+  });
+  const potential = Math.round(axes.reduce((s, a) => s + a.similarity, 0) / axes.length);
+  const interests = pickN(INTEREST_POOL, 3);
+  const day = int(3, 86);
+  return {
+    id: `pot_${i + 1}`,
+    person: { name, username: `wxid_${encodeURIComponent(name)}_${i + 20}`, avatar: name.slice(0, 1) },
+    viewer: { name: '我', username: 'wxid_self' },
+    potential: Math.min(97, potential),
+    unfamiliarity: {
+      direct_messages: int(0, 6),
+      last_interaction: rng() > 0.4 ? dayOffsetToIso(int(30, 88), int(9, 22)) : undefined,
+      mutual_friends: pickN(GROUPS[0].members, int(1, 3)),
+      reason: pick(['只在同一个群里发过言，没有直接对话过', '仅互相点过赞，未单独聊过', '有过一次简短问答，之后再无往来']),
+    },
+    one_liner: pick([
+      `你们都在聊${interests[0]}，但从未单独说过话。`,
+      `在同一个群里活跃了三个月，交集却只有 ${interests[0]}。`,
+      `兴趣重合度不低，只是缺一个开口的理由。`,
+    ]),
+    axes,
+    shared_interests: interests,
+    evidence: [
+      { from: 'me', text: pick([`最近在折腾${interests[0]}，有没有人一起`, `有没有人推荐${interests[1]}相关的入门资料`, `周末想去拍点东西，缺个搭子`]), time: fmtMD(day, int(9, 23), int(0, 59)), chat: pick([GROUPS[0].chat, GROUPS[1].chat, GROUPS[2].chat]) },
+      { from: 'them', text: pick([`我也在搞${interests[0]}，刚踩完一个坑`, `上次那个${interests[1]}的活动我也去了`, `同好！我这边有份资料可以给你`]), time: fmtMD(int(3, 86), int(9, 23), int(0, 59)), chat: pick([GROUPS[1].chat, GROUPS[2].chat, GROUPS[3].chat]) },
+    ],
+    icebreakers: [
+      `从「${interests[0]}」切入最自然：先问对方在用什么方案，再补一句你的踩坑经历。`,
+      `可以直接引用对方在群里说过的那句话，比重新开场白自然得多。`,
+      `如果都在同一个群，挑他发起的话题接一句，成本最低。`,
+    ],
+    entry_points: pickN([...GROUPS.map((g) => g.chat)], 2),
+    confidence: Number((0.68 + rng() * 0.3).toFixed(2)),
+  };
+});
+
+/* ---------------- 功能三统计 ---------------- */
+export const SOCIAL_STATS = {
+  familiar_count: RELATIONSHIPS.length,
+  memory_count: RELATIONSHIPS.reduce((s, r) => s + r.shared_memories.length, 0),
+  potential_count: POTENTIALS.length,
+  high_potential_count: POTENTIALS.filter((p) => p.potential >= 80).length,
+  range: { start: RANGE_START.toISOString(), end: RANGE_END.toISOString() },
+};
 
 /* ---------------- 总览统计 ---------------- */
 export const OVERVIEW: OverviewStats = (() => {

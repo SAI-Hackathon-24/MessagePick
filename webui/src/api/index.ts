@@ -32,7 +32,7 @@ import type {
   ApiEnvelope,
   ChatMember,
   ChatSession,
-  MatchResult,
+  FriendshipPotential,
   MemeCard,
   MemeRemixJob,
   NoticeItem,
@@ -40,11 +40,12 @@ import type {
   NoticeStatus,
   OverviewStats,
   PersonalityProfile,
-  ReverseSignal,
-  WordCloudItem,
+  RelationshipSummary,
   RemixKind,
+  SocialOverviewStats,
+  WordCloudItem,
 } from '@/types';
-import { GROUPS, MATCHES, MEMBERS_BY_GROUP, MEMES, NOTICES, OVERVIEW, PROFILES, REVERSE_SIGNALS, SESSIONS } from './mockData';
+import { GROUPS, MEMBERS_BY_GROUP, MEMES, NOTICES, OVERVIEW, POTENTIALS, PROFILES, RELATIONSHIPS, SESSIONS, SOCIAL_STATS } from './mockData';
 
 /* -------------------------------------------------------------------------- */
 /* 模拟场景开关                                                                */
@@ -253,12 +254,24 @@ export const api = {
       return { id, status };
     }),
 
-  /** 画像 —— 功能三占位 */
+  /** 画像 / 成员信息 —— 两个模式共用（性格展示卡片） */
   listProfiles: (chat: string) =>
     wrap<PersonalityProfile[]>(() => (isEmpty() ? [] : PROFILES.slice(0, Math.max(4, Math.min(12, (MEMBERS_BY_GROUP[chat] ?? []).length || 8))))),
 
-  listMatches: () => wrap<MatchResult[]>(() => (isEmpty() ? [] : MATCHES)),
-  listReverseSignals: () => wrap<ReverseSignal[]>(() => (isEmpty() ? [] : REVERSE_SIGNALS)),
+  /**
+   * 正向社交：已经熟识的人之间做了什么 → 关系总结
+   * 后端建议路由：POST /api/analyze/relationships
+   */
+  listRelationships: () => wrap<RelationshipSummary[]>(() => (isEmpty() ? [] : RELATIONSHIPS), 420),
+
+  /**
+   * 反向社交：非熟人但有相似兴趣、具备交友潜力的人
+   * 后端建议路由：POST /api/analyze/potential-friends
+   */
+  listPotentials: () => wrap<FriendshipPotential[]>(() => (isEmpty() ? [] : [...POTENTIALS].sort((a, b) => b.potential - a.potential)), 420),
+
+  /** 功能三统计 */
+  getSocialStats: () => wrap<SocialOverviewStats>(() => (isEmpty() ? { familiar_count: 0, memory_count: 0, potential_count: 0, high_potential_count: 0 } : SOCIAL_STATS), 240),
 
   /** 群列表（部分页面只需要 chat 数组） */
   listGroups: () => wrap(() => GROUPS.map((g) => ({ chat: g.chat, username: g.username, subject: g.subject, avatar: g.avatar, member_count: g.memberCount, is_group: g.username.includes('@chatroom') }))),

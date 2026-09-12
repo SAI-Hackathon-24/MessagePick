@@ -399,15 +399,23 @@ export const NOTICE_SORT_LABEL: Record<NoticeSortKey, string> = {
 };
 
 /* ========================================================================== *
- * 5. 功能三：正向社交与反向社交（目标.md 该节尚未编写）
+ * 5. 功能三：正向社交与反向社交
  * ========================================================================== */
 
 /**
- * TODO(目标.md 未完成): 本节字段为「按登记表功能点二 + 占位」推导的草案，
- * 定稿后需要替换。占位不写死布局，只保证页面与卡片容器存在。
+ * 语义定义（由使用者明确，取代此前的推导草案）：
  *
- * 登记表口径：语言风格、情绪倾向、话题偏好、互动频率、表情使用、回复习惯
- *            → 性格展示卡片 + 趣味人格标签 + 契合度匹配
+ *  · **正向社交**：面向「已经熟识的人」——总结这群人之间做了什么。
+ *    关注点是既有关系的**回顾与沉淀**（共同经历、互动习惯、话题、关系状态），
+ *    回答「我们这段时间都一起干了什么」。
+ *
+ *  · **反向社交**：面向「还并不熟悉的人」——找出其中与自己（或与某人）
+ *    有部分兴趣爱好等相似、具备交友潜力的人。
+ *    关注点是潜在关系的**发现**，回答「群里还有谁可能跟我聊得来」。
+ *
+ * ⚠️ 具体分析（谁算熟识、相似度怎么算）由后端负责。
+ *    前端只约定「结果长什么样」并提供展示模板 —— 所有对象均带 ext 扩展位，
+ *    后端新增维度不需要改动布局。
  */
 
 export interface PersonalityProfile extends Extensible {
@@ -435,40 +443,165 @@ export interface PersonalityProfile extends Extensible {
     active_hours?: string;
     /** 主动开启话题占比 0~1 */
     initiator_ratio?: number;
+    /** 表情使用占比 0~1 */
     emoji_ratio?: number;
   };
   confidence?: number;
 }
 
+/** 页面模式：正向=熟人关系总结 / 反向=潜在好友发现 */
 export type SocialMode = 'forward' | 'reverse';
 
-/** 正向社交：找到同频的人（契合度匹配） */
-export interface MatchResult extends Extensible {
+export const SOCIAL_MODE_LABEL: Record<SocialMode, { title: string; desc: string; question: string }> = {
+  forward: {
+    title: '正向社交',
+    desc: '已经熟识的人之间做了什么',
+    question: '我们这段时间一起干了什么？',
+  },
+  reverse: {
+    title: '反向社交',
+    desc: '非熟人但有相似兴趣，具备交友潜力',
+    question: '群里还有谁可能跟我聊得来？',
+  },
+};
+
+/* -------------------------------------------------------------------------- */
+/* 正向：熟人关系总结                                                           */
+/* -------------------------------------------------------------------------- */
+
+export interface RelationshipSummary extends Extensible {
   id: string;
-  /** 匹配的两人 */
-  a: { name: string; username: string };
-  b: { name: string; username: string };
-  /** 契合度 0~100 */
-  score: number;
-  /** 契合点，如「都爱在深夜聊技术」 */
-  reasons: string[];
-  /** 破冰建议 / 互动建议 */
-  icebreakers: string[];
-  /** 共同话题关键词 */
+  /** 关系对象（熟识的好友 / 群成员） */
+  person: { name: string; username: string; avatar?: string };
+  /** 这段关系里「我」是谁 —— 支持切换观察视角 */
+  viewer: { name: string; username: string };
+  /** 关系定位标签，如「并肩作战的队友」「夜宵搭子」 */
+  relation_tags: string[];
+  /** 一句话总结：我们之间是什么关系 */
+  one_liner: string;
+  /** 关系综述：一起做过什么（后端生成的叙述） */
+  narrative: string;
+  /** 互动频率画像 */
+  interaction: {
+    /** 消息总量（双向） */
+    message_count: number;
+    /** 我先开口占比 0~1 */
+    initiator_ratio?: number;
+    /** 平均回复间隔（分钟） */
+    avg_reply_minutes?: number;
+    /** 最近一次互动时间 */
+    last_interaction?: string;
+    /** 一起出现的会话/群数 */
+    shared_chats?: number;
+  };
+  /** 共同经历（对话里沉淀下来的「一起做过的事」） */
+  shared_memories: SharedMemory[];
+  /** 共同话题 */
   shared_topics: string[];
+  /** 情绪基调 */
+  vibe?: {
+    /** 正向情绪占比 0~1 */
+    positivity?: number;
+    /** 简短描述，如「互相吐槽但很稳」 */
+    label?: string;
+  };
+  /** 互动节奏热力：按周聚合的互动次数 */
+  rhythm?: { bucket: string; count: number }[];
+  /** 互动建议：怎么把这段关系维护得更好 */
+  suggestions?: string[];
+  confidence?: number;
 }
 
-/** 反向社交：避雷 / 沟通成本提示（占位，语义待定稿） */
-export interface ReverseSignal extends Extensible {
+export interface SharedMemory extends Extensible {
   id: string;
-  name: string;
-  username: string;
-  kind: 'low_response' | 'topic_mismatch' | 'style_clash' | 'cold_thread' | 'other';
+  /** 一句话概括这件事 */
+  headline: string;
+  /** 事情发生在哪儿（群名） */
+  chat: string;
+  /** 发生时间 */
+  happened_at: string;
+  /** 类型：活动 / 攻坚 / 闲聊 / 互助 … 可扩展 */
+  kind: 'activity' | 'sprint' | 'chat' | 'help' | 'celebration' | 'other';
+  /** 参与人（含双方及其他人） */
+  participants?: string[];
+  /** 相关原始消息片段 */
+  highlights?: { sender: string; text: string; time: string }[];
+}
+
+export const MEMORY_KIND_LABEL: Record<SharedMemory['kind'], string> = {
+  activity: '一起活动',
+  sprint: '并肩攻坚',
+  chat: '长谈',
+  help: '互相帮忙',
+  celebration: '庆祝',
+  other: '共同经历',
+};
+
+/* -------------------------------------------------------------------------- */
+/* 反向：潜在好友发现（非熟人 + 相似兴趣 → 交友潜力）                            */
+/* -------------------------------------------------------------------------- */
+
+/** 一个维度的相似度 —— 维度可扩展，前端按列表渲染，不写死 */
+export interface SimilarityAxis {
+  key: string;
   label: string;
-  detail: string;
-  /** 0~1，越高越需要注意 */
-  severity: number;
-  suggestion?: string;
+  /** 双方各自得分 0~100，用于画对比条 */
+  mine: number;
+  theirs: number;
+  /** 该维度相似度 0~100 */
+  similarity: number;
+  /** 证据说明，如「都聊过 7 次独立游戏」 */
+  evidence?: string;
+}
+
+export interface FriendshipPotential extends Extensible {
+  id: string;
+  /** 潜在好友 */
+  person: { name: string; username: string; avatar?: string };
+  viewer: { name: string; username: string };
+  /** 交友潜力 0~100（由后端计算口径决定） */
+  potential: number;
+  /** 为什么判定为「非熟人」—— 让用户理解推荐理由 */
+  unfamiliarity: {
+    /** 两人之间直接互动消息数 */
+    direct_messages: number;
+    /** 最近一次互动（可能很久以前，或从未） */
+    last_interaction?: string;
+    /** 是否存在共同好友 */
+    mutual_friends?: string[];
+    /** 从未同群 / 只同群未对话 */
+    reason?: string;
+  };
+  /** 一句话推荐理由 */
+  one_liner: string;
+  /** 相似维度对比（雷达或对比条） */
+  axes: SimilarityAxis[];
+  /** 共同兴趣关键词 */
+  shared_interests: string[];
+  /** 相似「证据」：双方各自说过的话，用于建立信任 */
+  evidence: { from: 'me' | 'them'; text: string; time: string; chat: string }[];
+  /** 破冰建议（具体可执行的开场） */
+  icebreakers: string[];
+  /** 潜在共同话题入口，如某个群、某次活动 */
+  entry_points?: string[];
+  confidence?: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 视图模型（前端内部使用：卡片 / 对比条 / 关系图的统一入参）                      */
+/* -------------------------------------------------------------------------- */
+
+export interface SocialOverviewStats {
+  /** 熟识人数（正向覆盖） */
+  familiar_count: number;
+  /** 共同经历条数 */
+  memory_count: number;
+  /** 潜在好友候选数 */
+  potential_count: number;
+  /** 高潜力（≥80）候选数 */
+  high_potential_count: number;
+  /** 分析时间范围 */
+  range?: { start: string; end: string };
 }
 
 /* ========================================================================== *

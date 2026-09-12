@@ -7,7 +7,7 @@ const NAV = [
   { to: '/', label: '总览', desc: '今日群聊体检', icon: LayoutDashboard },
   { to: '/meme', label: '热梗分析', desc: '词云 · 梗卡片 · 时间轴', icon: Sparkles },
   { to: '/inbox', label: '信息提取', desc: '通知 · 待办 · 时间轴', icon: MessageSquareText },
-  { to: '/social', label: '社交图谱', desc: '画像 · 匹配（占位）', icon: HeartHandshake },
+  { to: '/social', label: '社交关系', desc: '熟人总结 · 潜在好友', icon: HeartHandshake },
   { to: '/insight', label: '数据洞察', desc: '活跃度 · 类型分布', icon: BarChart3 },
 ] as const;
 
@@ -15,7 +15,7 @@ const SIM_TITLES: Record<string, string> = {
   '/': '群聊总览',
   '/meme': '群聊梗分析',
   '/inbox': '群聊信息提取',
-  '/social': '正向与反向社交',
+  '/social': '正向社交 · 反向社交',
   '/insight': '数据洞察',
 };
 

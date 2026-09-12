@@ -387,6 +387,83 @@ const statConsistent = await evaluate(`(() => {
 record('X2', '顶部统计「信息条目数」与时间轴「共 N 条」一致', statConsistent.match,
   `统计=${statConsistent.statCount} 列表=${statConsistent.resultCount} 计数徽章=${chipCounts.total}`);
 
+
+/* ================================================================== */
+/* S1：社交页 —— 正向社交 = 熟人之间做了什么（关系总结模板）               */
+/* ================================================================== */
+await goto('#/social');
+await sleep(1600);
+const forward = await evaluate(`(() => {
+  const t = document.body.innerText;
+  return {
+    hasModeForward: /正向社交/.test(t),
+    hasModeReverse: /反向社交/.test(t),
+    forwardDesc: /已经熟识的人之间做了什么/.test(t),
+    reverseDesc: /非熟人但有相似兴趣/.test(t),
+    hasPeopleList: /熟识的人/.test(t),
+    hasNarrative: /关系综述/.test(t),
+    hasMemories: /你们一起做过的事/.test(t),
+    hasMemoryBadge: /一起活动|并肩攻坚|互相帮忙|共同经历|长谈|庆祝/.test(t),
+    hasMetrics: /我先开口/.test(t) && /平均回复/.test(t),
+    // 旧语义必须彻底消失
+    legacyAvoid: /避雷|沟通成本|回复间隔偏长|话题易冷场|关注度/.test(t),
+    hasCrash: /undefined|NaN|\[object Object\]/.test(t),
+  };
+})()`);
+record('S1', '正向社交＝熟人关系总结（关系综述/共同经历/互动指标），旧「避雷」语义已移除',
+  forward.hasModeForward && forward.forwardDesc && forward.hasPeopleList && forward.hasNarrative &&
+  forward.hasMemories && forward.hasMetrics && forward.legacyAvoid === false,
+  `综述=${forward.hasNarrative} 共同经历=${forward.hasMemories} 记忆类型徽章=${forward.hasMemoryBadge} 指标=${forward.hasMetrics} 旧语义残留=${forward.legacyAvoid}`);
+
+/* ================================================================== */
+/* S2：反向社交 = 非熟人 + 相似兴趣 → 交友潜力（含「为什么算非熟人」）        */
+/* ================================================================== */
+const toReverse = await evaluate(clickByText('button', '反向社交'));
+await sleep(1400);
+const reverse = await evaluate(`(() => {
+  const t = document.body.innerText;
+  // 只取卡片里的徽章文本，避免被顶部说明条里的「交友潜力」字样干扰
+  const badges = [...document.querySelectorAll('main .mp-card span')].map(e => (e.textContent || '').trim());
+  const scoreBadge = badges.find(b => b.startsWith('交友潜力')) ?? '';
+  return {
+    switched: /可能聊得来的人/.test(t),
+    scoreBadge,
+    hasPotentialScore: new RegExp('^交友潜力[^0-9]*[0-9]+').test(scoreBadge),
+    hasUnfamiliarBlock: /为什么算「非熟人」/.test(t),
+    hasDirectMsg: /直接互动/.test(t),
+    hasAxes: /相似度对比/.test(t),
+    hasInterests: /#独立游戏|#摄影|#算法竞赛|#黑胶唱片|#长跑|#科幻小说|#手冲咖啡|#羽毛球|#表情包制作|#前端动效|#大模型应用|#爬虫与数据/.test(t),
+    hasIcebreak: /破冰建议/.test(t),
+    hasEvidence: /查看相似证据/.test(t),
+    legacyAvoid: /避雷|沟通成本|关注度[\s\S]{0,4}\d+%/.test(t),
+    hasCrash: /undefined|NaN|\[object Object\]/.test(t),
+  };
+})()`);
+record('S2', '反向社交＝非熟人＋相似兴趣的潜力发现（含非熟人依据/相似维度/破冰建议）',
+  toReverse.ok && reverse.switched && reverse.hasPotentialScore && reverse.hasUnfamiliarBlock &&
+  reverse.hasDirectMsg && reverse.hasAxes && reverse.hasInterests && reverse.hasIcebreak && reverse.legacyAvoid === false,
+  `潜力徽章=「${reverse.scoreBadge}」非熟人依据=${reverse.hasUnfamiliarBlock} 直接互动=${reverse.hasDirectMsg} 相似维度=${reverse.hasAxes} 兴趣=${reverse.hasInterests} 破冰=${reverse.hasIcebreak}`);
+
+/* ================================================================== */
+/* S3：空态分支（功能三也必须能表达"没有数据"）                            */
+/* ================================================================== */
+await goto('#/social?sim=empty');
+await sleep(1600);
+const socialEmpty = await evaluate(`(() => {
+  // 只看空态组件本体：顶部说明条里也含「时间范围」等字样，不能用整页文本判断
+  const panel = document.querySelector('main .mp-panel');
+  const panelText = panel ? panel.innerText : '';
+  const t = document.body.innerText;
+  return {
+    panelFound: !!panel,
+    hasHint: /没有可总结的熟识关系|暂未发现潜在好友/.test(panelText),
+    panelText: panelText.replace(/\\s+/g, ' ').slice(0, 60),
+    // ModuleScaffold 的说明文案里含「embedding」，不能用整页文本判断崩溃
+    hasCrash: /undefined|NaN|\[object Object\]/.test(panelText),
+  };
+})()`);
+record('S3', '社交页空态可表达且无崩溃', socialEmpty.hasHint && !socialEmpty.hasCrash, `空态组件=${socialEmpty.panelFound} 文案=「${socialEmpty.panelText}」`);
+
 console.log('\n===== 汇总 =====');
 const passed = results.filter((r) => r.pass).length;
 console.log(`${passed}/${results.length} 通过`);
