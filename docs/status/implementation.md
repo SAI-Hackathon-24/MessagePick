@@ -3,7 +3,7 @@
 > **状态**: —（**不参与状态机**）
 > **维护者**: 各模块负责人
 > **规则**: `docs/README.md` §12、`docs/design/README.md` §5
-> **最后更新**: 2026-09-12
+> **最后更新**: 2026-09-13
 
 ## 规则
 
@@ -17,16 +17,42 @@
 
 ## 看板
 
+<!--
+  2026-09-13 整体校准：按「代码 / 测试 / 端到端实跑」三项事实逐模块核对后重写。
+  取证方式（可复跑）：
+  · 测试：`npx vitest run`（55 文件 / 699 用例全绿，按模块统计见「已实现范围」列）
+  · 接口：`grep -c "app\.\(get\|post\|put\|delete\)(" src/server/shell/app.ts`
+  · 端到端：本机真实微信数据（22 群 / 8572 条消息 / 4036 人）跑通采集 → 分析 → 三模块查看；
+    另可用 `node webui/scripts/contract-probe.mjs http://127.0.0.1:8787`（契约探针，22/22）
+  · 未标 `完成` 的原因不是「代码没写完」，而是**缺少 AC 执行台账**（139 条 AC 尚无逐条结论），
+    按本文件规则不得自评 `完成`。补台账后可整批转 `待评审` → `完成`。
+-->
+
 | 模块 | 负责人 | 实现状态 | 设计文档 | 关联任务 | 阻塞原因 | 分支 / PR | 最后更新 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `MOD-001` | — | 进行中 | [mod-001-data-ingest.md](../design/impl/mod-001-data-ingest.md) | `TASK-006`、`TASK-007` | — | — | 2026-09-12 |
-| `MOD-002` | — | 进行中 | [mod-002-data-store-privacy.md](../design/impl/mod-002-data-store-privacy.md) | `TASK-001` ~ `TASK-003` | — | — | 2026-09-12 |
-| `MOD-003` | — | 进行中 | [mod-003-analysis-engine.md](../design/impl/mod-003-analysis-engine.md) | `TASK-004`、`TASK-005` | — | — | 2026-09-12 |
-| `MOD-004` | — | 未开始 | [mod-004-app-shell.md](../design/impl/mod-004-app-shell.md) | `TASK-008` ~ `TASK-011`、`TASK-036` ~ `TASK-038` | — | — | 2026-09-12 |
-| `MOD-005` | — | 进行中 | [mod-005-meme-analysis.md](../design/impl/mod-005-meme-analysis.md) | `TASK-012` ~ `TASK-017` | — | — | 2026-09-12 |
-| `MOD-006` | — | 进行中 | [mod-006-info-extraction.md](../design/impl/mod-006-info-extraction.md) | `TASK-018` ~ `TASK-021` | — | — | 2026-09-12 |
-| `MOD-007` | — | 进行中 | [mod-007-social-profile.md](../design/impl/mod-007-social-profile.md) | `TASK-022` ~ `TASK-031` | — | — | 2026-09-12 |
-| `MOD-008` | — | 进行中 | [mod-008-regeneration.md](../design/impl/mod-008-regeneration.md) | `TASK-032` ~ `TASK-035` | — | — | 2026-09-12 |
+| `MOD-001` | — | 进行中 | [mod-001-data-ingest.md](../design/impl/mod-001-data-ingest.md) | `TASK-006`、`TASK-007` | — | — | 2026-09-13 |
+| `MOD-002` | — | 进行中 | [mod-002-data-store-privacy.md](../design/impl/mod-002-data-store-privacy.md) | `TASK-001` ~ `TASK-003` | — | — | 2026-09-13 |
+| `MOD-003` | — | 进行中 | [mod-003-analysis-engine.md](../design/impl/mod-003-analysis-engine.md) | `TASK-004`、`TASK-005` | — | — | 2026-09-13 |
+| `MOD-004` | — | 进行中 | [mod-004-app-shell.md](../design/impl/mod-004-app-shell.md) | `TASK-008` ~ `TASK-011`、`TASK-036` ~ `TASK-038` | — | — | 2026-09-13 |
+| `MOD-005` | — | 进行中 | [mod-005-meme-analysis.md](../design/impl/mod-005-meme-analysis.md) | `TASK-012` ~ `TASK-017` | — | — | 2026-09-13 |
+| `MOD-006` | — | 进行中 | [mod-006-info-extraction.md](../design/impl/mod-006-info-extraction.md) | `TASK-018` ~ `TASK-021` | — | — | 2026-09-13 |
+| `MOD-007` | — | 进行中 | [mod-007-social-profile.md](../design/impl/mod-007-social-profile.md) | `TASK-022` ~ `TASK-031` | — | — | 2026-09-13 |
+| `MOD-008` | — | 阻塞 | [mod-008-regeneration.md](../design/impl/mod-008-regeneration.md) | `TASK-032` ~ `TASK-035` | **HTTP 层未暴露生成入口**：`API-030`（G1 表情包）/ `API-031`（G2 文字变体）/ `API-032`（G3 新梗候选）/ `API-033`（确认入库）/ `API-034`（生成历史）在 `src/server/shell/app.ts` 中**无路由**，前端 `webui/src/api/index.ts` 对这五项走 `notWired()` 降级。后端 `src/server/regen/` 已有实现（22 文件 / 112 用例），缺的是外壳编排与路由接线。卡在 **MOD-004 的编排面**（生成转交），不是 MOD-008 自身逻辑 | — | 2026-09-13 |
+
+## 已实现范围（2026-09-13 核对）
+
+<!-- 让「进行中」三个字有内容可查：写清各模块当前真正跑通的范围。 -->
+
+| 模块 | 已实现并通过测试的范围 | 端到端 |
+| --- | --- | --- |
+| `MOD-001` | `API-001`（触发采集，分来源）/ `API-002`（更新状态、分来源结果、`recordUpdatedTo`）；`wechat-cli` 子进程通道（`sessions` / `members` / `history`）；断点续采与分项重试；写失败不再记为「该群已完成」；8 个测试文件 / 73 用例 | 真实微信数据采入 22 群 / 8572 条消息；通讯录 1052 条 |
+| `MOD-002` | `API-003`（批量写入）/ `API-004`（按筛选分页读）/ `API-005`（删除预检）/ `API-006`（级联删除）；22 个实体类型；`(page, pageSize)` 分页护栏（上限 1000）；媒体按需解密通道；5 个测试文件 / 34 用例 | 群清单 / 数据量 / 成员目录读通 |
+| `MOD-003` | 统一任务执行（识别 / 抽取 / 聚类 / 生成 / 推断）；分块、并发、超时、重试、取消；**来源引用短编号协议**（修复模型编造长标识导致的抽取结果全量丢弃）；引擎配置热更新；4 个测试文件 / 45 用例 | 真实梗 209 个、提取条目 56 条的抽取均经此引擎 |
+| `MOD-004` | 本机 HTTP 外壳（41 条路由）；Host / Origin / 写令牌三重守卫；统一成功与失败信封（14 个错误标识）；SSE 进度 + 轮询降级；设置读写；跨模块编排（更新 → 预热、删除、详情组装）；`POST /api/analyze`（按需分析）；采集后预热 MOD-005/006/007；2 个测试文件 / 32 用例 | 页面托管（`pageBuilt`）、写令牌、操作进度均实测可用 |
+| `MOD-005` | `API-009` 词云 / `API-010` 梗单元 / `API-011` 生命周期 / `API-012` 纠正改判 / `API-013` 我相关；前端梗词云、梗生命周期（热力图）、梗列表、梗王榜、梗年鉴；9 个测试文件 / 143 用例 | 真实 209 个梗、生命周期按群取数、词云渲染 |
+| `MOD-006` | `API-014` 条目列表 / `API-015` 通知总览（四维分组）/ `API-017` 待办状态 / `API-018` 到期待办 / `API-019+029` 消息详情；11 个测试文件 / 105 用例 | 真实提取条目 56 条（投票 / @所有人 / 群公告），时间轴与待办可用 |
+| `MOD-007` | `API-020` 画像 / `API-021` 兴趣→人 / `API-022` 两人配对 / `API-023` 我的契合度 / `API-024` 组局建议 / `API-025+026` 身份对齐 / `API-027` 性格标签 / `API-028` 兴趣标签增删改 / `API-029` 兴趣提示；人标识按 MOD-002 口径、成员索引修掉跨群塌缩；8 个测试文件 / 147 用例 | 真实 4036 人；标签 89 个、人-标签连接 100 条 |
+| `MOD-008` | 后端：素材合规确认（`POST /api/generations/material-consents`）、产物读取（`GET /api/artifacts/:ref`）、渲染 worker 池、G1/G2/G3 生成逻辑；7 个测试文件 / 112 用例 | **未接通**：五个生成/历史入口无 HTTP 路由，界面不可达 |
 
 ## 状态统计
 
@@ -34,12 +60,16 @@
 
 | 状态 | 数量 |
 | --- | --- |
-| 未开始 | 1 |
+| 未开始 | 0 |
 | 进行中 | 7 |
-| 阻塞 | 0 |
+| 阻塞 | 1 |
 | 待评审 | 0 |
 | 完成 | 0 |
 
 ## 待确认
 
 <!-- > TODO: 待确认 —— <具体问题> -->
+
+> TODO: 待确认 —— 139 条 `AC-###` 缺执行台账（`docs/plan/acceptance-tests.md` 只有用例、没有逐条结论）。
+> 按本文件规则，`完成` 需「覆盖的 AC 全部通过」，因此 7 个 `进行中` 模块目前都卡在「无凭据转 `完成`」。
+> 建议补一份 AC 执行台账（可按模块分列「已通过 / 未覆盖 / 失败」），由各模块负责人填自己那部分后整批转 `待评审`。
