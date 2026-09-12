@@ -1,0 +1,31 @@
+{
+  "name": "messagepick",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MessagePick 服务端 —— 单机单用户的本地微信群聊天记录分析应用（梗分析 / 信息提取 / 社交画像 / 再创作生成）；浏览器界面在 webui/",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "npm --prefix webui run build && tsc --noEmit",
+    "dev:server": "tsx watch src/server/main.ts",
+    "dev:web": "npm --prefix webui run dev",
+    "start": "tsx src/server/main.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "express": "5.2.1",
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/express": "5.0.6",
+    "@types/node": "26.5.1",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

@@ -134,7 +134,12 @@ export default function ExtractPage() {
           ) : items.length === 0 ? (
             <EmptyState title="没有符合条件的结果" description="当前筛选条件下没有提取到内容。可以一键清除筛选条件，或扩大时间范围。" onAction={clearFilter} />
           ) : (
-            <div className="space-y-4">
+            /* 滚动容器：条目多时内部滚动，不再把右侧「通知总览」与页面其余部分推出画面。
+               高度按视口算（减去顶栏/标题/筛选条占位），并设下限，避免小屏被压成一条缝。 */
+            <div
+              data-testid="timeline-scroll"
+              className="max-h-[calc(100vh-320px)] min-h-[320px] space-y-4 overflow-y-auto overscroll-contain pr-1"
+            >
               {grouped.map(([day, list]) => (
                 <div key={day} className="relative pl-6">
                   <span className="absolute bottom-0 left-[7px] top-2 w-px bg-ink-900/[0.09]" aria-hidden />
@@ -244,8 +249,13 @@ function ExtractCard({
   const dl = deadlineHint(elements_deadline(item));
   return (
     <Card hover className="p-4" onClick={onOpen}>
-      {/* heading：AI 一句话总结 + 来源群 + 时间（详情页的 heading 同源 —— REQ-048） */}
-      <h3 className="text-[14.5px] font-semibold leading-snug text-ink-800">{item.summaryLine}</h3>
+      {/*
+        heading：一句话总结 + 来源群 + 时间（详情页的 heading 同源 —— REQ-048）。
+        ⚠️ 必须允许多行：`summaryLine` 由「主题 · 要素」拼成，实测可达 60+ 字
+        （如「针对做一个全屏翻页式回顾页…的提议征求大家意见」），
+        单行会把它截断，使用者看不到概要。
+      */}
+      <h3 className="text-[14.5px] font-semibold leading-snug text-ink-800 [overflow-wrap:anywhere]">{item.summaryLine}</h3>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <span className="mp-chip !py-0.5 !text-[11px]">{item.groupName}</span>
         <span className="mp-meta tabular-nums">{fmtMD(item.sentAt)}</span>
@@ -256,7 +266,10 @@ function ExtractCard({
         {item.remindState === 'remind' && <Badge tone="coral">即将到期</Badge>}
       </div>
 
-      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-ink-500">{item.aiSummary}</p>
+      {/* `API-014` 不提供 AI 摘要时会拿到空串：整段不渲染，不白占一行高度 */}
+      {item.aiSummary !== '' && (
+        <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-ink-500">{item.aiSummary}</p>
+      )}
 
       {/* 要素 */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">

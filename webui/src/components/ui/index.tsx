@@ -385,3 +385,57 @@ export function Drawer({
 export function TermHint({ children }: { children: ReactNode }) {
   return <span className="mp-meta" title={typeof children === 'string' ? children : undefined}>{children}</span>;
 }
+
+/**
+ * 「正在构建」提示（社交画像首次构建期间）
+ * =============================================================================
+ * MOD-007 的索引快照在构建**阶段 8** 才物化，而构建是逐人模型调用
+ * （真实数据实测：4035 人中 997 人需抽取，约 20 分钟）。构建完成前，
+ * `API-020` ~ `API-029` 一律返回 `IDENTITY_NOT_READY` —— 这是**契约规定的
+ * 正常中间态，不是失败**。
+ *
+ * 若把它当普通错误呈现，使用者看到的是「身份未就绪 / 没有任何结果」，
+ * 完全不知道后台其实正在跑。因此这里把它单独做成等待态：
+ * 说明正在发生什么、大约多久、以及为什么慢。
+ */
+export function BuildingState({
+  what = '社交画像',
+  minutes,
+  onRetry,
+  className,
+}: {
+  what?: string;
+  /** 预计耗时（分钟）；由调用方按规模给出，给不出就不写 */
+  minutes?: number;
+  onRetry?: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn('rounded-2xl border border-sky-500/25 bg-sky-500/[0.05] px-4 py-5', className)} aria-busy="true" data-testid="social-building">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 animate-pulse items-center justify-center rounded-lg bg-sky-500/15 text-sky-600">
+          <Loader2 size={15} className="animate-spin" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-ink-800">{what}正在构建，请稍候</div>
+          <p className="mp-meta mt-1 leading-relaxed">
+            首次构建要为每位成员单独调用一次模型（按本机数据规模，约
+            {minutes === undefined ? '数分钟到二十分钟' : ` ${minutes} 分钟`}）。
+            完成前相关接口会返回「身份未就绪」—— 这是**正常的中间态，不是出错**。
+          </p>
+          <p className="mp-meta mt-1 leading-relaxed">
+            构建在后台进行，可以先去别的页面看；稍后回到本页会自动显示结果。
+            {onRetry !== undefined && (
+              <>
+                {' '}
+                <button type="button" onClick={onRetry} className="font-medium text-jade-700 hover:underline">
+                  立即重新检查
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

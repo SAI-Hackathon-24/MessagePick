@@ -15,16 +15,19 @@ import { KEYWORD_SCOPE } from '@/types';
 import { Badge, Chip } from '@/components/ui';
 
 export function GlobalFilterBar({ meName }: { meName?: string }) {
-  const { filter, setFilter, clearFilter, groups, setModule } = useAppState();
+  const { filter, setFilter, clearFilter, groups, setModule, identityMode, setIdentityMode, status } = useAppState();
   const [openGroups, setOpenGroups] = useState(false);
   const [openTime, setOpenTime] = useState(false);
+  const [openIdentity, setOpenIdentity] = useState(false);
   const groupRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef<HTMLDivElement>(null);
+  const identityRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (groupRef.current && !groupRef.current.contains(e.target as Node)) setOpenGroups(false);
       if (timeRef.current && !timeRef.current.contains(e.target as Node)) setOpenTime(false);
+      if (identityRef.current && !identityRef.current.contains(e.target as Node)) setOpenIdentity(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -162,11 +165,57 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         )}
       </div>
 
-      {/* 身份（REQ-006：取自 Me 标识，不提供手工设置） */}
-      <span className="inline-flex items-center gap-1.5 rounded-xl border border-ink-900/[0.08] bg-white/80 px-2.5 py-1.5 text-xs text-ink-600" title="身份取自 wechat-cli 的 Me 标识，无需手工设置">
-        <UserRound size={13} className="text-jade-600" />
-        我：{meName ?? (filter.meId ? filter.meId : '未就绪')}
-      </span>
+      {/*
+        身份（REQ-006）：**值**取自 API-002 的 Me 标识、不提供手工输入；
+        但「视角」可切「全局 / 我相关」，**默认全局**。
+        ⚠️ 此前无论视角一律把 meId 下发给后端，导致所有查询被隐式按身份过滤 ——
+        实测同一份数据：全局 209 个梗，带 identity=me 只剩 15 个。
+      */}
+      <div className="relative" ref={identityRef}>
+        <button
+          type="button"
+          data-testid="filter-identity"
+          onClick={() => setOpenIdentity((v) => !v)}
+          title="身份值取自 wechat-cli 的 Me 标识；这里只切换「我相关 / 全局」视角"
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs transition-colors',
+            identityMode === 'me' ? 'border-jade-500/40 bg-jade-500/[0.08] text-jade-700' : 'border-ink-900/[0.08] bg-white/80 text-ink-600',
+          )}
+        >
+          <UserRound size={13} className={identityMode === 'me' ? 'text-jade-600' : 'text-ink-400'} />
+          {identityMode === 'me' ? `我：${meName ?? status?.meId ?? '未就绪'}` : '身份：全局'}
+          <ChevronDown size={12} className={cn('transition-transform', openIdentity && 'rotate-180')} />
+        </button>
+        {openIdentity && (
+          <div className="absolute right-0 top-[calc(100%+6px)] z-40 w-[232px] animate-fade-up rounded-xl border border-ink-900/[0.08] bg-white p-1.5 shadow-card-hover">
+            {(
+              [
+                { k: 'global' as const, label: '全局（不限）', hint: '三个模块都看全部数据' },
+                { k: 'me' as const, label: `我：${meName ?? status?.meId ?? '未就绪'}`, hint: '只看与「我」相关的数据' },
+              ]
+            ).map((opt) => (
+              <button
+                key={opt.k}
+                type="button"
+                data-testid={`identity-${opt.k}`}
+                onClick={() => {
+                  setIdentityMode(opt.k);
+                  setOpenIdentity(false);
+                }}
+                className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-jade-500/[0.07]"
+              >
+                <span className={cn('mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border', identityMode === opt.k ? 'border-jade-600 bg-jade-600' : 'border-ink-900/20')}>
+                  {identityMode === opt.k && <Check size={9} className="text-white" />}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium text-ink-700">{opt.label}</span>
+                  <span className="mp-meta block leading-snug">{opt.hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {hasFilter && (
         <Chip onClick={clearFilter} className="!border-coral-500/30 !text-coral-500" title="一键清除全部筛选条件">

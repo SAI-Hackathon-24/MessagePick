@@ -13,10 +13,23 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api } from '@/api';
 import type { GlobalFilter, Group, ModuleKey, UpdateStatus } from '@/types';
 
+/**
+ * 身份视角：`global` = 不限（**默认**）；`me` = 只看与「我」相关的数据（REQ-006）。
+ *
+ * ⚠️ 为什么需要这个开关：`filter.meId` 一旦有值，后端会把**所有**查询按身份过滤
+ * （`store/entities/registry.ts` 的 identity 绑定），词云只剩「我相关」的子集 ——
+ * 实测同一份数据：全局 209 个梗、`identity=me` 只有 15 个。
+ * 因此默认必须是全局，只有使用者主动切到「我」视角才下发。
+ */
+export type IdentityMode = 'global' | 'me';
+
 export interface AppState {
   /** 全局筛选条件：三个模块共用同一份 */
   filter: GlobalFilter;
   setFilter: (patch: Partial<GlobalFilter>) => void;
+  /** 身份视角（REQ-006）：`global` 不限 / `me` 只看我相关 */
+  identityMode: IdentityMode;
+  setIdentityMode: (mode: IdentityMode) => void;
   /** 一键清除筛选（空态时使用 —— REQ-016） */
   clearFilter: () => void;
   /** 关键词匹配对象说明（随模块变化 —— REQ-005） */
@@ -53,6 +66,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<{ start?: string; end?: string }>({});
   const [keyword, setKeyword] = useState('');
+  const [identityMode, setIdentityMode] = useState<IdentityMode>('global');
   const [groups, setGroups] = useState<Group[]>([]);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -95,11 +109,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       groupIds,
       timeRange,
       keyword,
-      /* 身份：取自 Me 标识。数据源就绪后由后端下发，此处用约定常量占位。 */
-      meId: status?.hasData ? 'p_陈禹哲' : undefined,
+      /* 身份：取自 API-002 下发的 Me 标识（REQ-006；界面不提供手工设置）。 */
+      // 值取自 API-002 的 Me 标识；只有「我」视角才下发，避免隐式过滤成子集
+      meId: identityMode === 'me' ? (status?.meId ?? undefined) : undefined,
       module,
     }),
-    [groupIds, timeRange, keyword, module, status?.hasData],
+    [groupIds, timeRange, keyword, module, identityMode, status?.meId],
   );
 
   const setFilter = useCallback((patch: Partial<GlobalFilter>) => {
@@ -112,6 +127,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setGroupIds([]);
     setTimeRange({});
     setKeyword('');
+    setIdentityMode('global');
   }, []);
 
   const setModule = useCallback((m: ModuleKey) => setModuleKey(m), []);
@@ -142,6 +158,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const value: AppState = {
     filter,
     setFilter,
+    identityMode,
+    setIdentityMode,
     clearFilter,
     setModule,
     groups,

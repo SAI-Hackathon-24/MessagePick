@@ -16,7 +16,7 @@ import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
 import { fmtMD } from '@/lib/format';
 import { INTEREST_CATEGORIES, INTEREST_CATEGORY_LABEL, PERSONALITY_LABEL, TAG_ORIGIN_LABEL, type InterestCategory, type PersonalityTrait } from '@/types';
-import { Avatar, Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, MiniStat, NoticeBar } from '@/components/ui';
+import { Avatar, Badge, Card, CardHeader, Chip, EmptyState, ErrorState, LoadingState, MiniStat, NoticeBar, BuildingState } from '@/components/ui';
 import { Button } from '@/components/shell/Button';
 import { HobbyRadar, PersonalityRadar } from '@/components/charts/Charts';
 
@@ -31,8 +31,20 @@ export function PersonProfilePanel({ personId }: { personId: string }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   if (profile.loading && !profile.data) return <LoadingState label="正在读取兴趣画像…" rows={3} />;
+  // 构建中：IDENTITY_NOT_READY 是契约规定的正常中间态，不是失败
+  if (profile.error?.code === 'IDENTITY_NOT_READY') {
+    return (
+      <div data-testid="person-profile">
+        <BuildingState />
+      </div>
+    );
+  }
   if (profile.error) {
-    return <ErrorState error={profile.error} onRetry={profile.refetch} />;
+    return (
+      <div data-testid="person-profile">
+        <ErrorState error={profile.error} onRetry={profile.refetch} />
+      </div>
+    );
   }
   const p = profile.data;
   if (!p) return <EmptyState title="没有可展示的画像" />;

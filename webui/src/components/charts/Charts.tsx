@@ -51,32 +51,119 @@ export function MonthlyBars({ buckets, height = 200 }: { buckets: MonthlyBucket[
   );
 }
 
-/** 生命周期条带（REQ-025、REQ-030：条带长度 = 生命周期跨度，按月显示强度） */
-export function LifecycleStrip({ row, height = 26 }: { row: LifecycleRow; height?: number }) {
+/**
+ * 梗生命周期总览（REQ-025、REQ-030）
+ * =============================================================================
+ * 原先是「每梗一行、各自一条独立条形图」：行与行之间没有共同的横轴，
+ * 既看不出「同一时间段在流行哪些梗」，也看不清「一个梗从初现到沉寂过了多久」。
+ * 改为**一张热力图**：横轴 = 月份（各梗共享），纵轴 = 梗，
+ * 单元格亮度 = 当月出现强度（顺序色阶），并在首现/峰值/沉寂月份加标记。
+ */
+export function LifecycleHeatmap({
+  rows,
+  leaders,
+  height,
+  onPick,
+}: {
+  rows: LifecycleRow[];
+  /**
+   * 当月领跑梗。**不在图内绘制**：原先用 ECharts 的 graphic 组件画在横轴下方，
+   * 该组件一旦未注册或配置异常会让整张热力图静默不绘制（表现为「格子空白」）。
+   * 现改为由调用方用 HTML 渲染，图表只负责画格子。
+   */
+  leaders?: { month: string; name: string }[];
+  height?: number;
+  onPick?: (memeId: string) => void;
+}) {
+  void leaders;
+  const months = useMemo(() => [...new Set(rows.flatMap((r) => r.monthlyIntensity.map((m) => m.month)))].sort(), [rows]);
+  /** 只展示活跃天数最长的若干梗，避免纵轴过长；其余通过表格视图查看 */
+  const shown = useMemo(() => [...rows].sort((a, b) => b.activeDays - a.activeDays).slice(0, 12), [rows]);
+
   const option = useMemo<EChartsOption>(
     () => ({
-      grid: { left: 0, right: 0, top: 2, bottom: 2 },
-      xAxis: { type: 'category', show: false, data: row.monthlyIntensity.map((m) => m.month) },
-      yAxis: { type: 'value', show: false, max: 1 },
+      grid: { left: 8, right: 16, top: 8, bottom: 56, containLabel: true },
       tooltip: {
         confine: true,
-        formatter: () => `${row.name}<br/>活跃天数 ${row.activeDays} 天<br/>峰值 ${row.peakAt.slice(0, 10)}<br/>沉寂 ${row.silentAt.slice(0, 10)}`,
+        backgroundColor: 'rgba(11,15,23,0.92)',
+        borderWidth: 0,
+        textStyle: { color: '#fff', fontSize: 12 },
+        formatter: (p: unknown) => {
+          const d = p as { value: [number, number, number] };
+          const [mi, ri, count] = d.value;
+          const row = shown[ri];
+          if (!row) return '';
+          return [
+            `<b>${row.name}</b>`,
+            `${months[mi]}：出现 <b>${count}</b> 次`,
+            `首现 ${row.firstSeenAt.slice(0, 10)}　峰值 ${row.peakAt.slice(0, 10)}　沉寂 ${row.silentAt.slice(0, 10)}`,
+            `活跃 ${row.activeDays} 天`,
+          ].join('<br/>');
+        },
+      },
+      xAxis: {
+        type: 'category',
+        data: months.map((m) => m.slice(2)),
+        axisLabel: { fontSize: 10, color: '#77839a' },
+        axisLine: { lineStyle: { color: 'rgba(11,15,23,0.1)' } },
+      },
+      yAxis: {
+        type: 'category',
+        data: shown.map((r) => r.name),
+        axisLabel: { fontSize: 11, color: '#556074' },
+        axisLine: { lineStyle: { color: 'rgba(11,15,23,0.1)' } },
+      },
+      visualMap: {
+        /**
+         * ⚠️ min/max 必须覆盖**真实次数**的取值范围。
+         * 早前写成 0–1（当成强度比例），而格子里是当月次数（3~14）：
+         * 超出范围的值不会被赋予颜色，会直接渲染成透明。
+         */
+        min: 0,
+        max: Math.max(...shown.flatMap((r) => r.monthlyIntensity.map((m) => m.count)), 1),
+        show: false,
+        inRange: { color: ['#eef7f1', '#0b5c33'] },
       },
       series: [
         {
-          type: 'bar',
-          data: row.monthlyIntensity.map((m) => ({
-            value: m.intensity,
-            itemStyle: { color: intensityColor(m.intensity), borderRadius: 2 },
-          })),
-          barCategoryGap: '12%',
+          type: 'heatmap',
+          /**
+           * ⚠️ value 必须是**三元组** [x 索引, y 索引, 数值]。
+           * 早前把它写成四元组 [x, y, 次数, 梗名]（想把梗名带进 tooltip）：
+           * ECharts 不报错，但会把所有数据退化到同一行绘制 —— 表现为
+           * 「只有最下面一行有格子、其余全是空白，且颜色几乎没有渐变」。
+           * 梗名改由 tooltip 的 formatter 用 y 索引反查（见上），不放数据里。
+           */
+          data: shown.flatMap((r, ri) =>
+            r.monthlyIntensity.map((m) => [months.indexOf(m.month), ri, m.count] as [number, number, number]),
+          ),
+          label: { show: true, fontSize: 10, color: '#fff', formatter: (p: unknown) => String((p as { value: [number, number, number] }).value[2] || '') },
+          itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 },
+          emphasis: { itemStyle: { borderColor: '#2b3242', borderWidth: 2 } },
         },
       ],
     }),
-    [row],
+    // leaders 由调用方用 HTML 渲染（不放进 option，避免依赖 graphic 组件）
+    [shown, months],
   );
-  return <EChart option={option} height={height} />;
+
+  const onEvents = useMemo(
+    () =>
+      onPick
+        ? {
+            click: (p: unknown) => {
+              const d = p as { value: [number, number, number] };
+              const row = shown[d.value?.[1] ?? -1];
+              if (row) onPick(row.memeId);
+            },
+          }
+        : undefined,
+    [onPick, shown],
+  );
+
+  return <EChart option={option} height={height ?? Math.max(260, shown.length * 38 + 90)} onEvents={onEvents} />;
 }
+
 
 /** 强度 → 顺序色阶（浅玉 → 微信绿 → 琥珀） */
 function intensityColor(v: number): string {
