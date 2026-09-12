@@ -63,7 +63,7 @@ export interface ShellConfig {
   ingest: {
     /** 采集分页大小（下次采集生效） */
     pageSize: number
-    /** 采集完成后自动触发分析（HLD 决策 9） */
+    /** 采集完成后自动分析全部群（默认关：按需在筛选条选群后点「分析」；HLD 决策 9 的开关） */
     autoTriggerAfterIngest: boolean
   }
 }
@@ -76,7 +76,7 @@ export const DEFAULT_CONFIG: ShellConfig = {
   timeouts: { cliCommandMs: 120_000, modelCallMs: 90_000, renderMs: 30_000 },
   retry: { maxAttempts: 3 },
   log: { level: 'info', retentionDays: 7 },
-  ingest: { pageSize: 1_000, autoTriggerAfterIngest: true },
+  ingest: { pageSize: 1_000, autoTriggerAfterIngest: false },
 }
 
 /** 可提交的设置补丁（只含使用者可改项；页面 `SettingsPatch` 的同源结构）。 */

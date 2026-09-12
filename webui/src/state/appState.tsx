@@ -145,7 +145,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           ? '。已触发后台分析，稍后刷新即可看到梗 / 提取 / 兴趣结果'
           : '。已触发后台分析；但模型服务尚未配置（见「设置 → 模型服务」），分析任务会失败';
       } else if (messagesOk && !auto) {
-        suffix = '。已按设置跳过自动分析（可在「设置 → 模型服务」开启）';
+        suffix = '。已按设置跳过自动分析（可在筛选条选群后点「分析」按需触发）';
       }
       setUpdateNotice(`${parts.join('；')}${suffix}`);
       refreshStatus();

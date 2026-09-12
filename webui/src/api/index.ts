@@ -591,6 +591,13 @@ export const api = {
     return { ok: true, data: cards };
   },
 
+  /** 按需分析（非契约接口）：对全部或指定群触发梗分析 + 信息提取（后台执行，立即返回）。 */
+  async analyze(groupIds: readonly string[]): Promise<ApiEnvelope<{ started: boolean; scope: string }>> {
+    return request<{ started: boolean; scope: string }>('POST', '/analyze', {
+      body: groupIds.length > 0 ? { groupIds } : {},
+    });
+  },
+
   /** 本模块自有：读取外壳设置（模型服务 / 采集 / 日志；密钥只写不读回）。 */
   async settings(): Promise<ApiEnvelope<SettingsView>> {
     return request<SettingsView>('GET', '/settings');

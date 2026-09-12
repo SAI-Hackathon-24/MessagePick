@@ -126,4 +126,4 @@ export interface MineOutput {
 export type ScopeFilter = SharedFilter
 
 /** 批次触发原因。 */
-export type BatchCause = 'ingestDone' | 'manualRetry'
+export type BatchCause = 'ingestDone' | 'manualRetry' | 'manual'

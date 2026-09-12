@@ -73,6 +73,16 @@ const fakeExtract = {
       window: null,
     }
   },
+  retry: async (scope: unknown) => {
+    seen['extractRetry'] = scope
+    seen['extractRetryCalls'] = ((seen['extractRetryCalls'] as number) ?? 0) + 1
+    return {
+      status: 'succeeded',
+      counts: { groups: 1, messages: 5, recognized: 5, extracted: 2, written: 2, failedTasks: 0 },
+      failures: [],
+      window: { from: 0, to: 1 },
+    }
+  },
 } as unknown as ExtractModule
 
 const fakeMeme = {
@@ -96,8 +106,9 @@ const fakeMeme = {
     seen['correction'] = input
     return { memeId: 'm1' }
   },
-  startBatch: (cause: string) => {
+  startBatch: (cause: string, scope?: unknown) => {
     seen['memeBatch'] = cause
+    seen['memeBatchScope'] = scope
     return {
       batchId: 'batch-1',
       cause,
@@ -415,7 +426,9 @@ describe('写路由（令牌守卫与入参校验）', () => {
     expect(view.model['name']).toBe('test-model')
   })
 
-  it('POST /api/update：群消息采集成功 → 后台触发预热（梗批次 + 信息提取，登记两条操作）', async () => {
+  it('POST /api/update：开启自动分析时群消息采集成功 → 后台触发分析（登记两条操作）', async () => {
+    // 自动分析默认关：先显式开启（旧行为开关）
+    await write('PUT', '/api/settings', { ingest: { autoTriggerAfterIngest: true } })
     seen['memeBatch'] = undefined
     seen['extractRun'] = undefined
     ingestOutcome = {
@@ -435,7 +448,7 @@ describe('写路由（令牌守卫与入参校验）', () => {
     expect(seen['extractRun']).toBe(true)
   })
 
-  it('POST /api/update：仅通讯录成功（群消息未成功）→ 不触发预热', async () => {
+  it('POST /api/update：仅通讯录成功（群消息未成功）→ 不触发分析', async () => {
     seen['memeBatch'] = undefined
     seen['extractRun'] = undefined
     ingestOutcome = {
@@ -448,5 +461,42 @@ describe('写路由（令牌守卫与入参校验）', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(seen['memeBatch']).toBeUndefined()
     expect(seen['extractRun']).toBeUndefined()
+  })
+
+  it('POST /api/analyze：指定群 → 梗批次限定该群、提取逐群重跑（全历史窗口）', async () => {
+    seen['memeBatch'] = undefined
+    seen['memeBatchScope'] = undefined
+    seen['extractRetryCalls'] = 0
+    const payload = await jsonOf(await write('POST', '/api/analyze', { groupIds: ['g1', 'g2'] }))
+    expect((payload['data'] as { started: boolean }).started).toBe(true)
+    await waitFor(async () => (seen['extractRetryCalls'] as number) === 2)
+    expect(seen['memeBatch']).toBe('manual')
+    expect(seen['memeBatchScope']).toEqual({ groupIds: ['g1', 'g2'] })
+    expect(seen['extractRetry']).toEqual({ groupId: 'g2', window: { from: 0, to: expect.any(Number) } })
+  })
+
+  it('POST /api/analyze：不传 groupIds → 全部范围（梗不限、提取按水位窗口）', async () => {
+    seen['memeBatch'] = undefined
+    seen['memeBatchScope'] = undefined
+    seen['extractRun'] = undefined
+    const response = await write('POST', '/api/analyze', {})
+    expect(response.status).toBe(200)
+    await waitFor(async () => seen['extractRun'] === true)
+    expect(seen['memeBatch']).toBe('manual')
+    expect(seen['memeBatchScope']).toEqual({})
+  })
+
+  it('POST /api/analyze：缺令牌 → 403（GUARD_STATUS），不触达端口', async () => {
+    seen['memeBatch'] = undefined
+    const response = await write('POST', '/api/analyze', { groupIds: ['g1'] }, { token: null })
+    expect(response.status).toBe(403)
+    expect(seen['memeBatch']).toBeUndefined()
+  })
+
+  it('POST /api/analyze：groupIds 为空数组 / 非法类型 → INVALID_INPUT', async () => {
+    const empty = await jsonOf(await write('POST', '/api/analyze', { groupIds: [] }))
+    expect((empty['error'] as Record<string, unknown>)['code']).toBe('INVALID_INPUT')
+    const bad = await jsonOf(await write('POST', '/api/analyze', { groupIds: 'g1' }))
+    expect((bad['error'] as Record<string, unknown>)['code']).toBe('INVALID_INPUT')
   })
 })

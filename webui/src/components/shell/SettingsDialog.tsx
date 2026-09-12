@@ -180,7 +180,7 @@ export function SettingsDialog() {
                   onChange={(e) => setAutoTrigger(e.target.checked)}
                   className="accent-jade-600"
                 />
-                采集完成后自动触发分析（梗分析 / 信息提取）
+                采集完成后自动分析全部群（关闭时：在筛选条选群后点「分析」按需触发）
               </label>
             </div>
             <div className="flex flex-wrap items-center gap-2">

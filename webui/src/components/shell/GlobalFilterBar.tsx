@@ -8,7 +8,8 @@
  *   界面只展示身份与「我相关」视角开关，不提供手工输入。
  */
 import { useEffect, useRef, useState } from 'react';
-import { CalendarRange, Check, ChevronDown, Layers, Search, UserRound, X } from 'lucide-react';
+import { CalendarRange, Check, ChevronDown, Layers, Play, Search, UserRound, X } from 'lucide-react';
+import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { cn } from '@/lib/cn';
 import { KEYWORD_SCOPE } from '@/types';
@@ -18,6 +19,8 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
   const { filter, setFilter, clearFilter, groups, setModule } = useAppState();
   const [openGroups, setOpenGroups] = useState(false);
   const [openTime, setOpenTime] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeMsg, setAnalyzeMsg] = useState<string | null>(null);
   const groupRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef<HTMLDivElement>(null);
 
@@ -35,6 +38,20 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
   const hasFilter = filter.groupIds.length > 0 || !!filter.timeRange.start || !!filter.timeRange.end || !!filter.keyword;
 
   const toggleGroup = (id: string) => setFilter({ groupIds: filter.groupIds.includes(id) ? filter.groupIds.filter((x) => x !== id) : [...filter.groupIds, id] });
+
+  /** 按需分析：对当前筛选的群（未选群 = 全部群）触发梗分析 + 信息提取（后台执行）。 */
+  const runAnalyze = async () => {
+    setAnalyzing(true);
+    setAnalyzeMsg(null);
+    const res = await api.analyze(filter.groupIds);
+    setAnalyzing(false);
+    if (!res.ok || !res.data) {
+      setAnalyzeMsg(`分析未启动：${res.error?.message ?? '未知错误'}`);
+      return;
+    }
+    setAnalyzeMsg(`已开始分析（${res.data.scope}）· 稍后刷新看结果`);
+    setTimeout(() => setAnalyzeMsg(null), 8_000);
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="global-filter">
@@ -167,6 +184,24 @@ export function GlobalFilterBar({ meName }: { meName?: string }) {
         <UserRound size={13} className="text-jade-600" />
         我：{meName ?? (filter.meId ? filter.meId : '未就绪')}
       </span>
+
+      {/* 按需分析（非契约入口）；作用范围 = 当前筛选的群 */}
+      <button
+        type="button"
+        data-testid="run-analysis"
+        onClick={() => void runAnalyze()}
+        disabled={analyzing}
+        title="对当前筛选的群（未选群 = 全部群）触发梗分析 + 信息提取"
+        className="inline-flex items-center gap-1.5 rounded-xl bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-ink-800 disabled:opacity-60"
+      >
+        <Play size={12} className={analyzing ? 'animate-pulse' : undefined} />
+        {analyzing ? '提交中…' : filter.groupIds.length > 0 ? `分析选中 ${filter.groupIds.length} 个群` : '分析全部群'}
+      </button>
+      {analyzeMsg && (
+        <span data-testid="analysis-msg" className="mp-meta text-jade-700">
+          {analyzeMsg}
+        </span>
+      )}
 
       {hasFilter && (
         <Chip onClick={clearFilter} className="!border-coral-500/30 !text-coral-500" title="一键清除全部筛选条件">

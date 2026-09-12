@@ -505,6 +505,33 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }),
   )
 
+  // 按需分析（非契约接口）：对全部或指定群触发梗分析 + 信息提取（后台执行，立即返回）
+  app.post(
+    '/api/analyze',
+    ...writeGuard,
+    handle('analyze', (req, res) => {
+      const scope = 'analyze'
+      const payload = optionalBody(req, scope)
+      const raw = payload['groupIds']
+      let groupIds: string[] | null = null
+      if (raw !== undefined && raw !== null) {
+        if (!Array.isArray(raw)) throw invalidInput('字段 groupIds 需为字符串数组', scope, { field: 'groupIds' })
+        const values = raw
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter((value) => value.length > 0)
+        if (values.length === 0) throw invalidInput('请至少选择一个群（不传 groupIds = 分析全部群）', scope, { field: 'groupIds' })
+        groupIds = [...new Set(values)]
+      }
+      void runAnalysis('manual', groupIds)
+      res.json(
+        success(metaOf(req), {
+          started: true as const,
+          scope: groupIds === null ? '全部群' : `${groupIds.length} 个群`,
+        }),
+      )
+    }),
+  )
+
   // API-004（实体类型 = 群）群清单读路径（直通；群标识 + 群名，CHG-026）
   app.get(
     '/api/filter-options/groups',
@@ -1199,23 +1226,35 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
     }
   })
 
+  /** 提取运行结果（按群逐次重跑后的聚合形态）。 */
+  type ExtractRunResult = Awaited<ReturnType<ExtractModule['run']>>
+
   /**
-   * 采集收尾后的后台预热（模块四 §4.5）：梗分析批次 + 信息提取。
-   * 不阻塞采集响应；缺块判定在模块内，重复触发安全。
+   * 后台分析（采集后自动 / 按需手动）：梗分析批次 + 信息提取。
+   * - `groupIds === null` = 全部范围（梗批次不限；提取按水位窗口增量扫描）
+   * - 指定群 = 批次 scope 限定；提取逐群按全历史窗口重跑该群分片（写入幂等）
+   * 不阻塞调用方响应；缺块判定在模块内，重复触发安全。
    */
-  async function runWarmup(): Promise<void> {
-    const memeOp = tracker.start({ kind: 'warmup', scope: '梗分析' })
-    const extractOp = tracker.start({ kind: 'warmup', scope: '信息提取' })
+  async function runAnalysis(cause: 'ingestDone' | 'manual', groupIds: string[] | null): Promise<void> {
+    const scopeLabel = groupIds === null ? '全部' : `${groupIds.length} 个群`
+    const memeOp = tracker.start({ kind: 'warmup', scope: `梗分析（${scopeLabel}）` })
+    const extractOp = tracker.start({ kind: 'warmup', scope: `信息提取（${scopeLabel}）` })
     const memeRun = (async () => {
       try {
-        const handle = meme.startBatch('ingestDone')
+        const handle = meme.startBatch(cause, groupIds === null ? {} : { groupIds })
         tracker.update(memeOp, { state: 'running' })
         const result = await handle.done
         const done = result.items.filter((item) => item.status === 'succeeded').length
+        logger.info?.('analysis.meme.result', {
+          scope: scopeLabel,
+          status: result.status,
+          done,
+          total: result.items.length,
+        })
         const failedItems = result.items.filter((item) => item.status === 'failed')
         if (failedItems.length > 0) {
           const first = failedItems[0]
-          logger.warn('warmup.meme.failures', {
+          logger.warn('analysis.meme.failures', {
             count: failedItems.length,
             itemId: first?.itemId,
             code: first?.error?.code,
@@ -1229,23 +1268,29 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
           ...(result.error === undefined ? {} : { error: result.error }),
         })
       } catch (error) {
-        tracker.update(memeOp, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:meme') })
+        tracker.update(memeOp, { state: 'failed', error: envelopeOfUnknown(error, 'analysis:meme') })
       }
     })()
     const extractRun = (async () => {
       try {
         tracker.update(extractOp, { state: 'running' })
-        const result = await extract.run()
+        const result = groupIds === null ? await extract.run() : await runExtractForGroups(groupIds)
+        logger.info?.('analysis.extract.result', {
+          scope: scopeLabel,
+          status: result.status,
+          counts: result.counts,
+          failures: result.failures.length,
+        })
         tracker.update(extractOp, {
           state: result.status,
           counts: { done: result.counts.written, total: result.counts.extracted },
           ...(result.status !== 'succeeded' && result.failures.length > 0
-            ? { error: envelopeOfUnknown(new Error(`信息提取有 ${result.failures.length} 个失败分片`), 'warmup:extract') }
+            ? { error: envelopeOfUnknown(new Error(`信息提取有 ${result.failures.length} 个失败分片`), 'analysis:extract') }
             : {}),
         })
         if (result.failures.length > 0) {
           const first = result.failures[0]
-          logger.warn('warmup.extract.failures', {
+          logger.warn('analysis.extract.failures', {
             count: result.failures.length,
             group: first?.group,
             code: first?.code,
@@ -1253,10 +1298,40 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
           })
         }
       } catch (error) {
-        tracker.update(extractOp, { state: 'failed', error: envelopeOfUnknown(error, 'warmup:extract') })
+        tracker.update(extractOp, { state: 'failed', error: envelopeOfUnknown(error, 'analysis:extract') })
       }
     })()
     await Promise.all([memeRun, extractRun])
+  }
+
+  /** 逐群提取（按群分析）：每群按全历史窗口重跑该群分片，聚合计数与失败。 */
+  async function runExtractForGroups(groupIds: readonly string[]): Promise<ExtractRunResult> {
+    const upper = clock()
+    const window = { from: 0, to: upper }
+    const failures: ExtractRunResult['failures'][number][] = []
+    let last: ExtractRunResult | null = null
+    let messages = 0
+    let recognized = 0
+    let written = 0
+    let extracted = 0
+    let failedTasks = 0
+    for (const groupId of groupIds) {
+      const result = await extract.retry({ groupId, window })
+      last = result
+      messages += result.counts.messages
+      recognized += result.counts.recognized
+      written += result.counts.written
+      extracted += result.counts.extracted
+      failedTasks += result.counts.failedTasks
+      failures.push(...result.failures)
+    }
+    const status: ExtractRunResult['status'] = failedTasks === 0 ? 'succeeded' : written > 0 || extracted > 0 ? 'partial' : 'failed'
+    return {
+      status,
+      counts: { groups: groupIds.length, messages, recognized, extracted, written, failedTasks },
+      failures,
+      window: last?.window ?? window,
+    }
   }
 
   async function runIngest(req: Request, res: Response, request: Api001Request): Promise<void> {
@@ -1286,12 +1361,12 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         } else {
           respondFailure(req, res, outcome.error, 'update')
         }
-        // 后台预热（模块四 §4.5）：群消息采集成功即触发；不等待、不阻塞响应
+        // 后台分析（模块四 §4.5）：群消息采集成功且开启自动分析时触发；不等待、不阻塞响应
         if (
           config.ingest.autoTriggerAfterIngest &&
           outcome.report.sources.some((source) => source.source === '群消息' && source.status === 'succeeded')
         ) {
-          void runWarmup()
+          void runAnalysis('ingestDone', null)
         }
       } catch (error) {
         tracker.update(id, { state: 'failed', error: envelopeOfUnknown(error, 'update') })
