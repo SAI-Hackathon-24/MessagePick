@@ -862,7 +862,8 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   app.get(
     '/api/people/roster',
     handle('people:roster', (req, res) => {
-      res.json(success(metaOf(req), { people: rosterOf() }))
+      const filter = filterOf(req, 'people:roster')
+      res.json(success(metaOf(req), { people: rosterOf(filter?.groupIds ?? null, filter?.keyword ?? null) }))
     }),
   )
 
@@ -1041,16 +1042,20 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
   /** 展示名清洗：去掉控制字符（微信昵称可能带 \u007f 等占位符）。 */
   const cleanName = (value: string): string => value.replace(/[\u0000-\u001f\u007f]/g, '').trim()
 
-  function rosterOf(): RosterEntry[] {
-    // 每个人挑一个展示名：优先非空（清洗后），其次优先「我」
+  function rosterOf(groupIds?: readonly string[] | null, keyword?: string | null): RosterEntry[] {
+    const allow = groupIds !== undefined && groupIds !== null && groupIds.length > 0 ? new Set(groupIds) : null
+    const kw = keyword === undefined || keyword === null || keyword.trim().length === 0 ? null : keyword.trim()
+    // 每个人挑一个展示名：优先非空（清洗后），其次优先「我」（受所选群约束）
     const bestOf = new Map<string, { name: string; score: number }>()
     for (const member of readAll('DM-004')) {
+      if (allow !== null && !allow.has(member.groupId)) continue
       const name = cleanName(member.displayName)
       const score = (name.length > 0 ? 2 : 0) + (member.isMe === true ? 1 : 0)
       const prev = bestOf.get(member.personId)
       if (prev === undefined || score > prev.score) bestOf.set(member.personId, { name, score })
     }
     return readAll('DM-011')
+      .filter((person) => allow === null || bestOf.has(person.personId))
       .map((person) => {
         const best = bestOf.get(person.personId)
         return {
@@ -1061,6 +1066,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
           activity: person.activity,
         }
       })
+      .filter((entry) => kw === null || entry.name.includes(kw))
       .sort((a, b) => Number(b.isMe) - Number(a.isMe) || Number(a.unknown) - Number(b.unknown) || a.name.localeCompare(b.name, 'zh'))
   }
 

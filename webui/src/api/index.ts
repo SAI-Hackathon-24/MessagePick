@@ -556,9 +556,11 @@ export const api = {
 
   /* ================= 模块三的其余展示形态（外壳展示组装路由） ================= */
 
-  /** 展示-人的名单（非契约接口）：社交页成员列表 / 统计 / 配对默认值。 */
-  async memberRoster(): Promise<ApiEnvelope<RelationGraph['nodes']>> {
-    const res = await request<{ people: RelationGraph['nodes'] }>('GET', '/people/roster');
+  /** 展示-人的名单（非契约接口）：社交页成员列表 / 统计 / 配对默认值；随全局筛选（群 / 关键词）。 */
+  async memberRoster(filter?: GlobalFilter): Promise<ApiEnvelope<RelationGraph['nodes']>> {
+    const res = await request<{ people: RelationGraph['nodes'] }>('GET', '/people/roster', {
+      query: filter === undefined ? [] : filterQuery(filter),
+    });
     if (!res.ok) return res;
     rememberPeople(res.data.people);
     return { ok: true, data: res.data.people };

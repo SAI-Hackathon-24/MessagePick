@@ -317,6 +317,7 @@ export class ExtractPipeline {
           const sources = item.sourceMessageIds
             .map((messageId) => byId.get(messageId))
             .filter((message): message is RawMessage => message !== undefined)
+          const sourceTime = sources.length === 0 ? null : Math.max(...sources.map((message) => message.sentAt))
           const outcome = await this.#runTask(buildExtractionRequest(item.recognitionType, sources))
           if (!outcome.ok) {
             failures.push(failureFromEnvelope(outcome.error, groupId))
@@ -335,6 +336,7 @@ export class ExtractPipeline {
             recognitionType: item.recognitionType,
             sourceMessageIds: item.sourceMessageIds,
             members,
+            sourceTime,
           })
           if (draft === null) {
             failures.push({
@@ -443,11 +445,13 @@ export class ExtractPipeline {
         if (!outcome.ok) return this.#retryFailedAgain(record, outcome, failures)
         const groupId = record.groupId ?? ''
         const members = new MemberNameIndex(this.#repository.readMembers(groupId))
+        const sourceTime = record.messages.length === 0 ? null : Math.max(...record.messages.map((message) => message.sentAt))
         const draft = parseExtractedDraft(outcome.result.items[0] ?? {}, {
           groupId,
           recognitionType: record.recognitionType ?? '',
           sourceMessageIds: record.sourceMessageIds ?? [],
           members,
+          sourceTime,
         })
         if (draft === null) {
           failures.push({

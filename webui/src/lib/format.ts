@@ -9,6 +9,11 @@ export const d = dayjs;
 
 /** 'MM-DD HH:mm' */
 export const fmtMD = (input: string | number) => dayjs(input).format('MM-DD HH:mm');
+/** 截止/事项时间：与当前同年 → 'MM-DD HH:mm'；跨年补年份 → 'YYYY-MM-DD HH:mm'（防误读年份）。 */
+export const fmtDeadline = (input: string | number) => {
+  const t = dayjs(input);
+  return t.year() === dayjs().year() ? t.format('MM-DD HH:mm') : t.format('YYYY-MM-DD HH:mm');
+};
 /** 'YYYY-MM-DD' */
 export const fmtYMD = (input: string | number) => dayjs(input).format('YYYY-MM-DD');
 /** 'MM月DD日 dddd' */

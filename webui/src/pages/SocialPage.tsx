@@ -19,6 +19,7 @@ import { Compass, HeartHandshake, Link2, Tags, UserRound, Users } from 'lucide-r
 import { api } from '@/api';
 import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/cn';
+import { useAppState } from '@/state/appState';
 import { INTEREST_CATEGORY_LABEL, type SocialDirection } from '@/types';
 import { Badge, Card, CardHeader, Chip, NoticeBar, SectionHeading, Stat } from '@/components/ui';
 import { PersonProfilePanel } from '@/components/unit/PersonProfilePanel';
@@ -31,6 +32,7 @@ import { RelationGraphPanel, InterestTimelinePanel } from '@/components/unit/Soc
 type Direction = SocialDirection;
 
 export default function SocialPage() {
+  const { filter } = useAppState();
   const [direction, setDirection] = useState<Direction>('forward');
   const [personId, setPersonId] = useState('');
   const [pairA, setPairA] = useState('');
@@ -40,7 +42,7 @@ export default function SocialPage() {
   const graph = useApi(() => api.relationGraph(), []);
   const cards = useApi(() => api.interestScoreCards(), []);
   const mine = useApi(() => api.myCompatibility(), []);
-  const roster = useApi(() => api.memberRoster(), []);
+  const roster = useApi(() => api.memberRoster(filter), [JSON.stringify(filter)]);
 
   // 成员列表来自「人的名单」（REQ-050）：未知成员也列出、不做推测（REQ-081）
   const people = roster.data ?? [];

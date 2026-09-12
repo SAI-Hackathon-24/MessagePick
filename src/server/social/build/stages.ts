@@ -236,22 +236,27 @@ export async function runStage3(env: StageEnv): Promise<StageOutcome> {
   const tagRows = new Map(existingTags)
   const linkRows = new Map(existingLinks)
   let dropped = 0
-  let tasks = 0
 
-  for (const person of env.workspace.persons) {
-    if (person.unknown) continue // 未知成员不进入抽取任务输入（决策 4）
-    const samples = sampleMessagesOf(person, env.workspace.messages)
-    if (samples.length === 0) continue
-    tasks += 1
-    const scope = `social.build.stage3:${person.personId}`
-    const outcome = await runTask(env, `3:${person.personId}`, extractionRequest(samples), scope)
+  const targets = env.workspace.persons
+    .filter((person) => !person.unknown) // 未知成员不进入抽取任务输入（决策 4）
+    .map((person) => ({ person, samples: sampleMessagesOf(person, env.workspace.messages) }))
+    .filter((entry) => entry.samples.length > 0)
+  /* 逐人模型任务按有界并发执行（瓶颈在模型调用；引擎队列另按 taskConcurrency 限流） */
+  const outcomes = await inPool(targets, BUILD_TASK_CONCURRENCY, ({ person, samples }) =>
+    runTask(env, `3:${person.personId}`, extractionRequest(samples), `social.build.stage3:${person.personId}`),
+  )
+  /* 结果合并按人员顺序串行进行：同一输入重复执行结果一致（§4 可重入） */
+  for (let index = 0; index < targets.length; index += 1) {
+    const target = targets[index]
+    const outcome = outcomes[index]
+    if (target === undefined || outcome === undefined) continue
     if (!outcome.ok) {
       failures.push(outcome.failure)
       continue
     }
     const parsed = parseExtraction(normalizeEvidenceRefs(outcome.outcome.result, outcome.outcome.sourceRefs), {
-      personId: person.personId,
-      activity: person.activity,
+      personId: target.person.personId,
+      activity: target.person.activity,
       messages: messagesById,
       now: env.clock(),
     })
@@ -275,7 +280,7 @@ export async function runStage3(env: StageEnv): Promise<StageOutcome> {
   const writtenTags = writeOrCollect(env, 'DM-013', changedTags, 'social.build.stage3.tags', failures)
   const writtenLinks = writeOrCollect(env, 'DM-014', changedLinks, 'social.build.stage3.links', failures)
   return {
-    counts: { tasks, tags: tagRows.size, links: linkRows.size, writtenTags, writtenLinks, dropped },
+    counts: { tasks: targets.length, tags: tagRows.size, links: linkRows.size, writtenTags, writtenLinks, dropped },
     failures,
   }
 }
@@ -356,27 +361,30 @@ export async function runStage6(env: StageEnv): Promise<StageOutcome> {
   const existing = readOrThrow(env.store, 'DM-016', 'social.build.stage6.personality')
   env.workspace.personality = existing
   const pending: PersonalityTag[] = []
-  let tasks = 0
   let dropped = 0
 
-  for (const person of env.workspace.persons) {
-    if (person.unknown) continue
-    const samples = sampleMessagesOf(person, env.workspace.messages)
-    if (samples.length === 0) continue
-    tasks += 1
-    const scope = `social.build.stage6:${person.personId}`
-    const outcome = await runTask(env, `6:${person.personId}`, personalityRequest(samples), scope)
+  const targets = env.workspace.persons
+    .filter((person) => !person.unknown)
+    .map((person) => ({ person, samples: sampleMessagesOf(person, env.workspace.messages) }))
+    .filter((entry) => entry.samples.length > 0)
+  const outcomes = await inPool(targets, BUILD_TASK_CONCURRENCY, ({ person, samples }) =>
+    runTask(env, `6:${person.personId}`, personalityRequest(samples), `social.build.stage6:${person.personId}`),
+  )
+  for (let index = 0; index < targets.length; index += 1) {
+    const target = targets[index]
+    const outcome = outcomes[index]
+    if (target === undefined || outcome === undefined) continue
     if (!outcome.ok) {
       failures.push(outcome.failure)
       continue
     }
-    const parsed = parsePersonalityInference(outcome.outcome.result, person.personId)
+    const parsed = parsePersonalityInference(outcome.outcome.result, target.person.personId)
     dropped += parsed.dropped
     pending.push(...applyInferredCandidates(existing, parsed.rows))
   }
 
   const written = writeOrCollect(env, 'DM-016', pending, 'social.build.stage6.personality', failures)
-  return { counts: { tasks, candidates: pending.length, written, dropped }, failures }
+  return { counts: { tasks: targets.length, candidates: pending.length, written, dropped }, failures }
 }
 
 /** 阶段 7 身份候选：本地确定性匹配（O(成员 × 联系人) 段在 worker 桥）；不覆盖已有结论。 */
@@ -488,7 +496,26 @@ export function personalityRequest(samples: readonly RawMessage[]): Api007Reques
 // ---------------------------------------------------------------------------
 
 type TaskSuccess = Extract<TaskOutcome, { ok: true }>
+/** 构建阶段的逐人任务并发上限（瓶颈在模型调用；引擎队列另按 taskConcurrency 限流）。 */
+const BUILD_TASK_CONCURRENCY = 4
 
+/** 有界并发执行并按原顺序收集结果（合并阶段仍按人员顺序串行，保证可重入一致）。 */
+async function inPool<T, R>(items: readonly T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) return
+      const item = items[index]
+      if (item === undefined) continue
+      results[index] = await worker(item)
+    }
+  })
+  await Promise.all(runners)
+  return results
+}
 /** 执行一次模型任务：优先重试已失败的任务引用（API-008），否则执行（API-007）。 */
 async function runTask(
   env: StageEnv,

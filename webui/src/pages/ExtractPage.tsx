@@ -15,7 +15,7 @@ import { AlarmClock, Check, CheckCheck, Clock, EyeOff, ListFilter, MessageSquare
 import { api } from '@/api';
 import { useAppState } from '@/state/appState';
 import { useApi } from '@/lib/useApi';
-import { deadlineHint, fmtDayLabel, fmtMD, num } from '@/lib/format';
+import { deadlineHint, fmtDayLabel, fmtDeadline, fmtMD, num } from '@/lib/format';
 import {
   EXTRACT_TYPE_LABEL,
   NOTICE_DIMENSION_LABEL,
@@ -100,7 +100,7 @@ export default function ExtractPage() {
           <span className="font-medium">距到期不足 1 天且未处理：</span>
           {(due.data ?? []).map((t) => (
             <span key={t.id} className="rounded-lg bg-white/70 px-2 py-0.5 text-[11.5px]">
-              {t.subject} · {t.groupName} · {fmtMD(t.deadline)}
+              {t.subject} · {t.groupName} · {fmtDeadline(t.deadline)}
             </span>
           ))}
           <span className="mp-meta">（提醒只在应用打开时检查，不做后台常驻）</span>
@@ -260,10 +260,10 @@ function ExtractCard({
 
       {/* 要素 */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {item.elements.time && <span className="mp-meta">时间：{fmtMD(item.elements.time)}</span>}
+        {item.elements.time && <span className="mp-meta">时间：{fmtDeadline(item.elements.time)}</span>}
         {item.elements.location && <span className="mp-meta">地点：{item.elements.location}</span>}
         {item.elements.people?.length ? <span className="mp-meta">人物：{item.elements.people.map((p) => p.name).join('、')}</span> : null}
-        {item.elements.deadline && <span className="mp-meta">DDL：{fmtMD(item.elements.deadline)}</span>}
+        {item.elements.deadline && <span className="mp-meta">DDL：{fmtDeadline(item.elements.deadline)}</span>}
         <span className="mp-meta">{item.sourceRefs.length} 条来源</span>
       </div>
 
