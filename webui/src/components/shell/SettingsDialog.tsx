@@ -202,11 +202,26 @@ export function SettingsDialog() {
               <Button variant={scope.kind === 'all' ? 'primary' : 'outline'} onClick={() => void runPrecheck({ kind: 'all' })}>
                 全量清空
               </Button>
-              {groups.slice(0, 4).map((g) => (
-                <Button key={g.id} variant={scope.kind === 'group' && scope.groupId === g.id ? 'primary' : 'outline'} onClick={() => void runPrecheck({ kind: 'group', groupId: g.id })}>
-                  {g.name}
-                </Button>
+              <span className="mp-meta">或按群删除（共 {groups.length} 个群，点选后先预检）</span>
+            </div>
+
+            <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-ink-900/[0.06] bg-white/60 p-1.5">
+              {groups.map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  data-testid={`delete-group-${g.id}`}
+                  onClick={() => void runPrecheck({ kind: 'group', groupId: g.id })}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-coral-500/[0.06]',
+                    scope.kind === 'group' && scope.groupId === g.id && 'bg-coral-500/[0.08] ring-1 ring-coral-500/30',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate text-ink-700">{g.name}</span>
+                  <span className="shrink-0 text-[10px] text-ink-300">预检</span>
+                </button>
               ))}
+              {!groups.length && <div className="mp-meta px-2 py-2">尚未采集到群：请先完成一次「更新数据」。</div>}
             </div>
 
             {!precheck && !busy && (

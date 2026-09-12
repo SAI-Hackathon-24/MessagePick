@@ -272,9 +272,19 @@ export function toUpdateResult(wire: {
 }
 
 /** 群清单 → 筛选条群多选项（并写入展示名缓存）。 */
+/** 群展示名：源头未给名字（groupName 就是群 ID）时给出明确回退，而不是裸 ID。 */
+const groupDisplayName = (groupId: string, groupName: string): string => {
+  const cleaned = groupName.trim();
+  if (cleaned.length > 0 && cleaned !== groupId) return cleaned;
+  const short = groupId.split('@')[0] ?? groupId;
+  return `未命名群聊（${short}）`;
+};
+
 export function toGroups(records: Array<{ groupId: string; groupName: string }>): Group[] {
-  for (const row of records) groupNames.set(row.groupId, row.groupName);
-  return records.map((row) => ({ id: row.groupId, name: row.groupName }));
+  for (const row of records) groupNames.set(row.groupId, groupDisplayName(row.groupId, row.groupName));
+  return records
+    .map((row) => ({ id: row.groupId, name: groupDisplayName(row.groupId, row.groupName) }))
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh'));
 }
 
 const ENTITY_LABEL: Record<string, string> = {
