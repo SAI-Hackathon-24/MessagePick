@@ -251,3 +251,13 @@ export class SocialBuildPipeline implements ProfileBuildPipeline {
 export function createProfileBuildPipeline(options: ProfileBuildPipelineOptions): ProfileBuildPipeline {
   return new SocialBuildPipeline(options)
 }
+
+// ---------------------------------------------------------------------------
+// 查询层与装配方共用的导出（§3.1「build/」、§5.2、§3.4）
+// ---------------------------------------------------------------------------
+
+export { SocialIndex, buildIndexSnapshot, joinPersonTagLinks } from './index-store'
+export type { SocialIndexSnapshot } from './index-store'
+export { createEngineTaskGateway, taskRefOf } from './gateway'
+export type { SocialTaskGateway } from './gateway'
+export { tagHeatScores } from './stages'

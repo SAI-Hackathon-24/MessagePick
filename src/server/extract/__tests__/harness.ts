@@ -81,7 +81,9 @@ export interface FakeReadCall {
   page: PageRequest | null
 }
 
-/** 进程内存储替身：按实体类型分派到种子表；DM-010 写入按条目标识去重（重放不产生副本）。 */
+/** 进程内存储替身：按实体类型分派到种子表；`DM-010` 写入按 upsert 语义 —— 已存在则只覆盖
+ * `MOD-002` 的变异白名单（主题 / 优先级 / 待办状态 / 提醒状态），身份与其余字段保持原值
+ * （`written` 只计新增，保住管线「重放 written=0」的既有用例）。 */
 export class FakeStore implements ExtractStorePort {
   readonly groups: Group[]
   readonly messages: RawMessage[]
@@ -91,6 +93,10 @@ export class FakeStore implements ExtractStorePort {
   readonly writeCalls: Array<{ type: EntityType; count: number }> = []
   /** 置真时读取抛 `STORAGE_UNAVAILABLE`（模拟存储不可用，§6）。 */
   failReads = false
+  /** 置真时写入抛 `STORAGE_UNAVAILABLE`（模拟存储整体不可用，§6）。 */
+  failWrites = false
+  /** 置真时写入返回失败明细（模拟记录被存储拒绝，§6；原值不变）。 */
+  rejectWrites = false
 
   constructor(seed: FakeStoreSeed = {}) {
     this.groups = [...(seed.groups ?? [])]
@@ -119,12 +125,30 @@ export class FakeStore implements ExtractStorePort {
     _options?: { bumpEpoch?: boolean },
   ): WriteResult {
     this.writeCalls.push({ type, count: records.length })
+    if (this.failWrites) throw storageUnavailable('store:write', '存储不可用（FakeStore 注入）')
     if (type !== 'DM-010') return { written: 0, failures: [{ identity: [], reason: `FakeStore 不支持写入 ${type}` }] }
+    if (this.rejectWrites) {
+      return {
+        written: 0,
+        failures: (records as unknown as readonly ExtractedItem[]).map((record) => ({
+          identity: [record.entryId],
+          reason: 'FakeStore 注入的写入拒绝',
+        })),
+      }
+    }
     let written = 0
     for (const record of records as unknown as readonly ExtractedItem[]) {
-      if (this.entries.some((entry) => entry.entryId === record.entryId)) continue // 记录身份去重
-      this.entries.push({ ...record })
-      written += 1
+      const existing = this.entries.find((entry) => entry.entryId === record.entryId)
+      if (existing === undefined) {
+        this.entries.push({ ...record })
+        written += 1
+        continue
+      }
+      // upsert：对齐 MOD-002 的 DM-010 变异白名单 —— 只覆盖可变字段，身份与其余字段永不覆盖
+      existing.topic = record.topic
+      existing.priority = record.priority
+      existing.todoStatus = record.todoStatus
+      existing.remindState = record.remindState
     }
     return { written, failures: [] }
   }

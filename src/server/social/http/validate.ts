@@ -17,9 +17,11 @@ import {
   type Id,
   type IdentityDecision,
   type InterestTagAction,
+  type InterestTagInput,
   type PeopleSearchEntry,
   type PersonalityDimension,
   type PersonalityTagAction,
+  type SharedFilter,
 } from '@shared'
 
 import { socialError } from '../errors'
@@ -92,4 +94,57 @@ export function requirePersonalityAction(value: unknown, scope: string): Persona
 /** 兴趣标签操作闭集（增 / 删 / 改）。 */
 export function requireInterestAction(value: unknown, scope: string): InterestTagAction {
   return requireOneOf(value, INTEREST_TAG_ACTIONS, scope, '兴趣标签操作')
+}
+
+/**
+ * 选填的全局筛选条件（`api-contract.md` §1.3 的四键；空 = 不限）。
+ *
+ * 只做**结构**校验：未知键忽略（前向兼容），已知键的类型与元素格式非法 → `INVALID_INPUT`。
+ */
+export function optionalFilter(value: unknown, scope: string): SharedFilter | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw socialError(ErrorCode.INVALID_INPUT, '全局筛选条件必须是结构', { scope })
+  }
+  const filter = value as SharedFilter
+  if (filter.groupIds !== undefined && filter.groupIds !== null) {
+    if (!Array.isArray(filter.groupIds)) {
+      throw socialError(ErrorCode.INVALID_INPUT, '筛选条件的群标识必须是数组', { scope })
+    }
+    for (const groupId of filter.groupIds) requireId(groupId, scope, '群标识')
+  }
+  if (filter.timeRange !== undefined && filter.timeRange !== null) {
+    const range = filter.timeRange as { from?: unknown; to?: unknown }
+    if (!isFiniteNumber(range.from) || !isFiniteNumber(range.to)) {
+      throw socialError(ErrorCode.INVALID_INPUT, '筛选条件的起止时间必须是有限数值', { scope })
+    }
+  }
+  if (filter.keyword !== undefined && filter.keyword !== null && typeof filter.keyword !== 'string') {
+    throw socialError(ErrorCode.INVALID_INPUT, '筛选条件的关键词必须是文本', { scope })
+  }
+  if (filter.identity !== undefined && filter.identity !== null) {
+    requireId(filter.identity, scope, '筛选条件的身份')
+  }
+  return filter
+}
+
+/**
+ * 选填的兴趣标签入参（`API-028`）：一级维度闭集 + 二级标签名非空。
+ *
+ * 值缺失（`undefined` / `null`）返回 `null` 由调用方按各操作的条件必填口径处置；
+ * 给了值但结构或闭集非法 → `INVALID_INPUT`。
+ */
+export function optionalInterestTag(value: unknown, scope: string): InterestTagInput | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw socialError(ErrorCode.INVALID_INPUT, '标签必须是结构（一级维度 + 二级标签名）', { scope })
+  }
+  const tag = value as InterestTagInput
+  const name = requireText(tag.name, scope, '标签名')
+  const dimension = requireDimension(tag.dimension, scope)
+  return { name, dimension }
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }

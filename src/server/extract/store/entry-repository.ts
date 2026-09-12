@@ -300,13 +300,18 @@ export class EntryRepository {
   ): void {
     let page = 1
     const filter: SharedFilter | null = groupId === null ? null : { groupIds: [groupId] }
-    while (budget.remaining > 0 && sink.size < needed.size) {
+    // `sink` 是跨群共享的，不能用它的总条数判断本群是否找齐：只数「本群仍缺的」条数。
+    let missing = needed.size
+    while (budget.remaining > 0 && missing > 0) {
       const pageSize = Math.min(this.#readPageSize, Math.max(1, budget.remaining))
       const result = this.#port.read('DM-003', filter, { page, pageSize })
       if (result.records.length === 0) return
       budget.remaining -= result.records.length
       for (const message of result.records) {
-        if (needed.has(message.messageId)) sink.set(message.messageId, message)
+        if (needed.has(message.messageId) && !sink.has(message.messageId)) {
+          sink.set(message.messageId, message)
+          missing -= 1
+        }
       }
       if (page * pageSize >= result.pageInfo.total) return
       page += 1

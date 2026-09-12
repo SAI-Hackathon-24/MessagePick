@@ -8,18 +8,24 @@
  * - `tags/`：标签规范化 / 同义归并 / 抽取映射 / 人工增删改计划（DM-013 ~ DM-015）；
  * - `align/`：身份对齐候选生成与结论提交（§8 决策 5；DM-012）；
  * - `store/`：`API-003` / `API-004` 适配与 `dataEpoch` 观测（§3.1、§5.2）；
+ * - `build/`：构建流水线 `ProfileBuildPipeline`（单飞、幂等、可重入；§3.4）与进程内索引 `SocialIndex`（§5.2）；
+ * - `http/`：`API-020` ~ `API-029` 十条接口的适配（入参校验、错误映射；§3.3、§4）；
+ * - `personality/`：性格标签推断编排与确认 / 增删改（§5.3；DM-016、`REQ-074` ~ `REQ-077`）；
+ * - `suggest/`：组局建议编排（`API-024` 的生成任务构造与结果解析；`REQ-063`）；
  * - `errors.ts`：统一信封映射（§6；未映射异常归「未知失败」，不新增标识）。
  *
- * 设计声明但尚未落盘的入口与本文件不补实现的部分：
- * `API-020` ~ `API-029` 适配层（`http/`）、构建流水线 `ProfileBuildPipeline`（`build/`）、
- * `personality/`、`suggest/` 与 `src/web/social/**`。
+ * 设计声明但尚未落盘的入口（本文件不补实现）：`src/web/social/**`（浏览器侧视图与图表，§3.1）。
  */
 
 export * from './align'
+export * from './build'
+export * from './http'
 export * from './interactions'
 export * from './person'
+export * from './personality'
 export * from './scoring'
 export * from './store'
+export * from './suggest'
 export * from './tags/edits'
 export * from './tags/extract'
 export * from './tags/merge'
