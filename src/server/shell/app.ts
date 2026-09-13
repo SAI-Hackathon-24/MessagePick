@@ -1532,15 +1532,27 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
       const upper = clock()
       const window = { from: 0, to: upper }
       const failures: ExtractRunResult['failures'][number][] = []
-      let last: ExtractRunResult | null = null
       let messages = 0
       let recognized = 0
       let written = 0
       let extracted = 0
       let failedTasks = 0
-      for (const groupId of groupIds) {
-        const result = await extract.retry({ groupId, window })
-        last = result
+      /* 2026-09-13：逐群串行 → 3 群并行（实测单群以分钟计，47 群串行 = 求和；
+         引擎队列 64 路共享，3 群并发不会打满；counts/failures 聚合逐群做，与串行结果一致）。 */
+      const results: Array<ExtractRunResult | undefined> = new Array(groupIds.length)
+      let cursor = 0
+      const runners = Array.from({ length: Math.min(3, groupIds.length) }, async () => {
+        for (;;) {
+          const index = cursor
+          cursor += 1
+          const groupId = groupIds[index]
+          if (groupId === undefined) return
+          results[index] = await extract.retry({ groupId, window })
+        }
+      })
+      await Promise.all(runners)
+      for (const result of results) {
+        if (result === undefined) continue
         /* counts 在替身 / 降级端口上可能缺省：一律按 0 计，不因可选字段缺省而中断整轮 */
         messages += result.counts?.messages ?? 0
         recognized += result.counts?.recognized ?? 0
@@ -1549,6 +1561,7 @@ export function createShellApp(options: ShellAppOptions = {}): ShellApp {
         failedTasks += result.counts?.failedTasks ?? 0
         failures.push(...result.failures)
       }
+      const last = results[results.length - 1]
       const status: ExtractRunResult['status'] = failedTasks === 0 ? 'succeeded' : written > 0 || extracted > 0 ? 'partial' : 'failed'
       return {
         status,
