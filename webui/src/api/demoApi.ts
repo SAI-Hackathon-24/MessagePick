@@ -271,14 +271,14 @@ interface DemoMeme {
 
 const MEMES: DemoMeme[] = [
   {
-    id: 'm01', name: '几号机好了', type: 'catchphrase', groupId: 'g01',
-    interpretation: '出自共享实验设备排队，后来变成催进度的通用说法，任何等待都能用。',
-    monthly: [18, 22, 26, 31, 24, 19, 14], firstDays: 186, lastDays: 0,
-    users: [{ id: 'p01', count: 34 }, { id: 'p04', count: 27 }, { id: 'p09', count: 19 }],
+    id: 'm01', name: '合成中科大', type: 'catchphrase', groupId: 'g01',
+    interpretation: '把「中科大」当成合成目标，调侃几个学校拼起来才够格的玩笑话。',
+    monthly: [24, 29, 34, 38, 33, 27, 21], firstDays: 187, lastDays: 0,
+    users: [{ id: 'p01', count: 38 }, { id: 'p04', count: 30 }, { id: 'p09', count: 22 }],
     highlights: [
-      { sender: 'p01', text: '几号机好了？（第 3 次问）', days: 2, kind: 'text' },
-      { sender: 'p04', text: '几号机好了，我的数据还在跑', days: 5, kind: 'text' },
-      { sender: 'p09', text: '几号机好了.jpg', days: 9, kind: 'image' },
+      { sender: 'p01', text: '合成中科大（1/3）', days: 0, kind: 'text' },
+      { sender: 'p04', text: '还差两个学校就能合成中科大了', days: 3, kind: 'text' },
+      { sender: 'p09', text: '合成中科大.jpg', days: 7, kind: 'image' },
     ],
   },
   {
@@ -320,11 +320,14 @@ const MEMES: DemoMeme[] = [
     highlights: [{ sender: 'p04', text: '容我加塞一条内推', days: 7, kind: 'text' }],
   },
   {
-    id: 'm07', name: '对齐一下', type: 'catchphrase', groupId: 'g01',
-    interpretation: '开会用语流入日常，用于任何需要同步信息的场合。',
-    monthly: [9, 13, 16, 22, 25, 21, 18], firstDays: 168, lastDays: 0,
-    users: [{ id: 'p01', count: 26 }, { id: 'p07', count: 17 }, { id: 'p14', count: 12 }],
-    highlights: [{ sender: 'p01', text: '先对齐一下明天谁带电脑', days: 0, kind: 'text' }],
+    id: 'm07', name: '胆子真是肥嘟嘟的', type: 'catchphrase', groupId: 'g01',
+    interpretation: '把「胆子肥」叠成「肥嘟嘟」，骂人带撒娇，用于任何离谱操作之后的评价。',
+    monthly: [16, 20, 24, 29, 27, 22, 18], firstDays: 174, lastDays: 0,
+    users: [{ id: 'p01', count: 29 }, { id: 'p07', count: 21 }, { id: 'p14', count: 15 }],
+    highlights: [
+      { sender: 'p01', text: '你这胆子真是肥嘟嘟的', days: 0, kind: 'text' },
+      { sender: 'p07', text: '胆子真是肥嘟嘟的，我先跑', days: 4, kind: 'text' },
+    ],
   },
   {
     id: 'm08', name: '来活了', type: 'catchphrase', groupId: 'g09',
@@ -334,11 +337,15 @@ const MEMES: DemoMeme[] = [
     highlights: [{ sender: 'p04', text: '来活了，今晚别等我', days: 1, kind: 'text' }],
   },
   {
-    id: 'm09', name: '猫猫震惊', type: 'sticker', groupId: 'g01',
-    interpretation: '一张震惊猫表情包，用于表达「这也行？」。',
-    monthly: [13, 17, 21, 29, 33, 28, 24], firstDays: 182, lastDays: 0,
-    users: [{ id: 'p01', count: 31 }, { id: 'p02', count: 24 }, { id: 'p07', count: 21 }],
-    highlights: [{ sender: 'p01', text: '', days: 0, kind: 'image' }],
+    id: 'm09', name: '中秋国庆连放，谢谢禹琪', type: 'catchphrase', groupId: 'g01',
+    interpretation: '把假期安排归功于一位同学，从此每逢调休放假都要刷一遍谢谢禹琪。',
+    monthly: [19, 24, 28, 35, 39, 33, 28], firstDays: 183, lastDays: 0,
+    users: [{ id: 'p01', count: 35 }, { id: 'p02', count: 27 }, { id: 'p07', count: 23 }],
+    highlights: [
+      { sender: 'p02', text: '中秋国庆连放，谢谢禹琪', days: 0, kind: 'text' },
+      { sender: 'p01', text: '谢谢禹琪（鞠躬）', days: 1, kind: 'text' },
+      { sender: 'p07', text: '', days: 2, kind: 'image' },
+    ],
   },
   {
     id: 'm10', name: '虾仁猪心', type: 'catchphrase', groupId: 'g04',
@@ -369,11 +376,14 @@ const MEMES: DemoMeme[] = [
     highlights: [{ sender: 'p03', text: '已阅', days: 0, kind: 'text' }],
   },
   {
-    id: 'm14', name: '收到', type: 'catchphrase', groupId: 'g02',
-    interpretation: '与「已阅」并列的极简回复，通知类消息的默认回执。',
-    monthly: [16, 20, 24, 29, 27, 22, 19], firstDays: 176, lastDays: 0,
-    users: [{ id: 'p11', count: 25 }, { id: 'p30', count: 16 }, { id: 'p06', count: 14 }],
-    highlights: [{ sender: 'p11', text: '收到', days: 0, kind: 'text' }],
+    id: 'm14', name: '军训求雨', type: 'catchphrase', groupId: 'g02',
+    interpretation: '军训期间的集体许愿，后来泛指任何「求个天气」的场合。',
+    monthly: [17, 21, 25, 30, 28, 23, 19], firstDays: 178, lastDays: 0,
+    users: [{ id: 'p11', count: 27 }, { id: 'p30', count: 18 }, { id: 'p06', count: 15 }],
+    highlights: [
+      { sender: 'p11', text: '军训求雨，明天就下', days: 0, kind: 'text' },
+      { sender: 'p30', text: '军训求雨（第 4 天）', days: 2, kind: 'text' },
+    ],
   },
   {
     id: 'm15', name: '狗头保命', type: 'sticker', groupId: 'g17',
@@ -608,13 +618,25 @@ function filterGroups(f: GlobalFilter | undefined): DemoGroup[] {
   return GROUPS.filter((g) => f.groupIds.includes(g.id));
 }
 
+/**
+ * 词云标签用的短名。
+ * 词云（`MemeCloudChart`）按 `drawOutOfBound: false` 渲染，放不进画布的词会被**整个丢掉**，
+ * 而演示数据里的「中秋国庆连放，谢谢禹琪」有 10 个字 —— 直接渲染会从词云里消失
+ * （列表 / 梗单元 / 悬停仍用全名，不受影响）。
+ */
+function cloudLabelOf(name: string): string {
+  if (name.length <= 6) return name;
+  const head = name.split(/[，,、]/)[0]!.trim();
+  return head.length >= 2 && head.length <= 6 ? head : `${name.slice(0, 5)}…`;
+}
+
 function cloudOf(f: GlobalFilter | undefined, layout: 'heat' | 'firstSeen'): MemeCloudResult {
   const allowed = new Set(filterGroups(f).map((g) => g.id));
   const memes = MEMES.filter((m) => allowed.has(m.groupId));
   const totalOf = (m: DemoMeme): number => m.monthly.reduce((a, b) => a + b, 0);
   const entries: MemeCloudEntry[] = memes.map((m) => ({
     memeId: m.id,
-    name: m.name,
+    name: cloudLabelOf(m.name),
     frequency: totalOf(m),
     occurrences: totalOf(m),
     type: m.type,
@@ -1114,7 +1136,7 @@ export const api = {
         senderName: memberName(`p0${i + 1}`),
         sentAt: daysAgo(d, 20, 10 + i),
         kind: 'text' as const,
-        text: ['几号机好了', '马上，还剩一组', '我先占个位', '等你'][i]!,
+        text: ['合成中科大', '还差两个学校', '我先占个位', '等你'][i]!,
       })),
     });
   },
@@ -1347,14 +1369,14 @@ export const api = {
   /* ---- 再创作生成（正式版后端尚未暴露 HTTP 入口，这里给出可演示的结果）---- */
   async generateStickers(): Promise<Envelope<unknown>> {
     return ok({
-      variants: [1, 2, 3, 4].map((i) => ({ variantId: `v${i}`, tier: 'popular_sticker', caption: ['几号机好了', '来活了', '摸鱼中', '下次一定'][i - 1] })),
+      variants: [1, 2, 3, 4].map((i) => ({ variantId: `v${i}`, tier: 'popular_sticker', caption: ['合成中科大', '来活了', '摸鱼中', '下次一定'][i - 1] })),
       credited: true,
     });
   },
 
   async generateTextVariants(): Promise<Envelope<unknown>> {
     return ok({
-      variants: ['几号机好了？在线等', '几号机好了，我先去吃饭', '几号机好了（第 3 次）', '几号机好了，别让我再问', '几号机好了，蹲一个'].map((text, i) => ({ variantId: `t${i}`, text })),
+      variants: ['合成中科大？在线等', '合成中科大，我先去吃饭', '合成中科大（1/3）', '合成中科大，别让我再问', '合成中科大，蹲一个'].map((text, i) => ({ variantId: `t${i}`, text })),
       credited: true,
     });
   },
@@ -1376,11 +1398,11 @@ export const api = {
         id: 'g1',
         kind: 'G1',
         memeId: 'm01',
-        memeName: '几号机好了',
+        memeName: '合成中科大',
         tier: 'popular_sticker',
         template: '经典上白下黑',
         createdAt: daysAgo(1, 15, 0),
-        outputs: [1, 2, 3, 4].map((i) => ({ url: `media/demo-sticker-${i}.png`, text: ['几号机好了', '来活了', '摸鱼中', '下次一定'][i - 1] })),
+        outputs: [1, 2, 3, 4].map((i) => ({ url: `media/demo-sticker-${i}.png`, text: ['合成中科大', '来活了', '摸鱼中', '下次一定'][i - 1] })),
         creationMark: true,
       },
       {
