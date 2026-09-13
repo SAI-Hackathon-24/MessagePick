@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-ssr
+# 静态示范站产物（`npm run demo:build` 生成，按需本地构建/部署，不入库）
+demo-dist
 *.local
 .DS_Store
 .vite

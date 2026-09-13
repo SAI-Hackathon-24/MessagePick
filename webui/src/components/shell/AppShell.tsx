@@ -113,12 +113,13 @@ export function AppShell() {
           </NoticeBar>
         )}
 
+        {/* 静态示范站横幅：仅当 apiMode()==='mock'（即 @/api 被别名到 demoApi.ts 的示范构建）出现。
+            正式构建里 api/index.ts 恒返回 'http'，故正式站点不会显示这条。 */}
         {apiMode() === 'mock' && (
           <NoticeBar tone="amber" className="mb-4">
-            当前运行在 <strong>开发期数据模式</strong>（后端 MOD-001 ~ MOD-008 尚未实现）。
-            界面与数据均严格按 <span className="font-mono">docs/design</span> 的接口契约与数据模型产出；
-            接真实后端时把 <span className="font-mono">VITE_API_MODE</span> 设为 <span className="font-mono">http</span> 并删除
-            <span className="font-mono"> src/api/fixtures.ts</span>、<span className="font-mono">src/api/mock.ts</span>（REQ-019：不做演示数据版本）。
+            <strong>静态示范站</strong>：界面与交互均为<strong>最新版本的真实代码</strong>，数据为
+            <strong>内置演示数据</strong>（虚构群名与内容，不含任何真实聊天记录）。真实使用需在本机运行服务进程并完成
+            一次采集与模型分析 —— 见 <span className="font-mono">docs/USAGE.md</span>。
           </NoticeBar>
         )}
 
