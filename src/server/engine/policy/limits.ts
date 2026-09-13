@@ -45,7 +45,10 @@ export interface EngineLimits {
 /** 默认模块常数（数值可按实现期校准；修改需同步 mod-003 决策 4 / 7 的口径）。 */
 export const ENGINE_LIMITS: EngineLimits = {
   registryCapacity: 200,
-  chunkMaxUnits: 40,
+  /* 2026-09-13 校准：任务内块串行（总时延 ≈ 串行块数 × 单块时长）。40→100 将识别窗口
+     （200 条）由 5 块降为 2 块；单块 ~24s（40 条实测）→ 100 条预估 35-50s，仍低于
+     modelCallMs 90s 超时。副作用：单块失败影响面 2.5×（当前失败率极低，可接受）。 */
+  chunkMaxUnits: 100,
   /* 2026-09-13 校准：标签聚类等整入单次调用的输入随构建范围增长（实测 241 个标签即撞
      原 200 上限 → stage4 INPUT_TOO_LARGE）；上调至 400（提示词仍远小于模型上下文）。 */
   singleCallMaxUnits: 400,

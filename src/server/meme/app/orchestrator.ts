@@ -55,8 +55,9 @@ const TASK_TYPE_BY_KIND: Readonly<Record<MemeTaskKind, TaskType>> = {
 /**
  * 识别窗口并行宽度（引擎队列并发上限由 `model.taskConcurrency` 控制，两者取小生效）。
  * 背景：识别是逐窗模型调用，串行时真实数据下以十分钟计；云端端点并发余量充足。
+ * 2026-09-13：8→16（引擎池 64 常年闲置大半；实测单块 ~24s，提高窗并发直接缩短总时长）。
  */
-const MEME_BATCH_CONCURRENCY = 8
+const MEME_BATCH_CONCURRENCY = 16
 
 /** 有界并发执行（错误已由 `#runItem` 内部收敛到 item，不在此处抛出）。 */
 async function runPooled<T>(items: readonly T[], width: number, run: (item: T) => Promise<void>): Promise<void> {
