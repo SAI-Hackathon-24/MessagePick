@@ -584,12 +584,14 @@ export function toLifecycleView(wire: {
     peakMonth: string;
     silentAt: number;
     activeDays: number;
-    monthlyStrength: Record<string, number>;
+    /** API-011 同时返回 monthlyStrength（0~1 归一化强度）与 monthlyCounts（真实次数）；
+     * 展示一律取 monthlyCounts —— 早前误用 monthlyStrength，表现为「次数永远是 0~1」。 */
+    monthlyCounts: Record<string, number>;
   }>;
   leadingMemes: Array<{ month: string; memeIds: string[] }>;
 }): LifecycleView {
   const rows = wire.rows.map((row) => {
-    const months = Object.entries(row.monthlyStrength).sort(([left], [right]) => left.localeCompare(right));
+    const months = Object.entries(row.monthlyCounts).sort(([left], [right]) => left.localeCompare(right));
     const max = Math.max(1, ...months.map(([, count]) => count));
     return {
       memeId: row.memeId,
